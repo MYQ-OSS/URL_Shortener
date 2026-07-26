@@ -34,6 +34,22 @@ spring:
     password: admin123
     publisher-confirm-type: correlated   # 统计消息要确认，否则丢了都不知道
     publisher-returns: true
+    # 连接超时必须收紧：broker 不可达时 convertAndSend 会阻塞到这个超时。
+    # 统计链路的契约是"绝不影响跳转"，默认 60s 的超时会把跳转线程挂住。
+    connection-timeout: 2000
+    listener:
+      simple:
+        # 消费失败的处理链（与 RabbitConfig 的死信拓扑配套）：
+        #   进程内重试 3 次（消息不重新入队，不产生重复投递）
+        #   -> 仍失败 -> reject 且不回队 -> broker 按 x-dead-letter-exchange 转入死信队列
+        # requeue 不能开：毒消息（格式非法）会陷入"消费-失败-回队-再消费"死循环。
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 500
+        default-requeue-rejected: false
+        # broker 未就绪时队列不存在不算致命错误，容器会自动重连（本地无 MQ 时也能启动）
+        missing-queues-fatal: false
 
 mybatis-plus:
   global-config:
