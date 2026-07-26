@@ -1,0 +1,96 @@
+spring:
+  application:
+    name: URL_Shortener
+
+  datasource:
+    # Week 1-3 直连 MySQL；Week 4 接 ShardingSphere 时改成：
+    #   url: jdbc:shardingsphere:classpath:sharding.yaml
+    #   driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    url: jdbc:mysql://127.0.0.1:3306/shortlink?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
+    username: root
+    password: root123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 压测第 4 阶段要调这里。默认 10 在跳转链路打满时会成为瓶颈。
+      # 经验公式：连接数 ≈ (核数 * 2) + 磁盘数，但真实值必须压出来。
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 3000
+
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5672
+    username: admin
+    password: admin123
+    publisher-confirm-type: correlated   # 统计消息要确认，否则丢了都不知道
+    publisher-returns: true
+
+mybatis-plus:
+  global-config:
+    db-config:
+      logic-delete-field: delFlag
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+    # ⚠️ 压测时务必关掉 SQL 日志。开着它跳转链路 QPS 会掉一大截，
+    # 而且你会误以为瓶颈在 DB。
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+shortlink:
+  # 短域名。本地开发用 localhost:8080；真实短域名需要 ICP 备案（周期不可控，别卡在这）
+  domain: localhost:8080
+
+  cache:
+    # 100_000 而不是 10_000 —— 这个值是算出来的，不是拍的。
+    # Zipf α=1.0 / N=1000万 时（见 ADR-012 的数值计算）：
+    #    10,000 条 -> L1 覆盖 58.6% 请求，占内存  2.4 MB
+    #   100,000 条 -> L1 覆盖 72.4% 请求，占内存 23.8 MB   <-- 多 21MB 换 +13.8pp
+    #   500,000 条 -> L1 覆盖 82.1% 请求，占内存  119 MB   <-- 边际收益明显递减
+    # 期望延迟从 207us 降到 138us（-33%）。23MB 对 JVM 是白菜价，所以选 100k。
+    local-max-size: 100000
+    # 5 秒不是为了容量，是为了一致性兜底：
+    # Pub/Sub 广播失效可能丢消息，短 TTL 保证最坏 5 秒必定生效。
+    local-ttl-seconds: 5
+
+  bloom:
+    # 1000 万 / 0.01% -> 19.17 bit/元素 -> 22.9 MiB, k=13
+    expected-insertions: 10000000
+    false-probability: 0.0001
+
+  rate-limit:
+    create:        # 严格：写操作，刷量无正当理由
+      capacity: 20
+      refill-per-sec: 10
+    redirect:      # 宽松：正常用户会高频访问同一短链
+      capacity: 200
+      refill-per-sec: 100
+
+  risk:
+    block-private-network: true
+
+logging:
+  level:
+    root: INFO
+    top.mayiqin.url_shortener: INFO
+  # ⚠️ 压测前把跳转链路的日志级别调到 WARN。
+  # 同步日志刷盘是 async-profiler 火焰图里最常见的瓶颈，通常占 15-30%。
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    tags:
+      application: url-shortener

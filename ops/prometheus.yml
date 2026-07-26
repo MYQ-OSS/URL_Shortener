@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: url-shortener
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # Docker Desktop / Windows 用 host.docker.internal 访问宿主机上的应用
+      - targets: ["host.docker.internal:8080"]
