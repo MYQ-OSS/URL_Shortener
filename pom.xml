@@ -81,6 +81,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <!-- ★ 没有它，spring.data.redis.lettuce.pool.* 配置被静默忽略，
+             Lettuce 退化为"所有线程共用一条连接"——200 并发下全部 Redis 命令串行化。
+             实测教训（2026-08-03）：+Redis L2 阶段 QPS 反而低于裸 MySQL，
+             根因就是这里。加上之后连接池才真正生效。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
         <!-- Redisson：分布式锁 + RBloomFilter。4.x 起明确支持 Spring Boot 4.0 -->
         <dependency>
             <groupId>org.redisson</groupId>
@@ -141,14 +149,47 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- ═══════════════ 分库分表（Week 4，冒烟验证通过后放开）═══════════════ -->
+        <!-- ═══════════════ 分库分表（Week 4，冒烟已过 ADR-017 后放开）═══════════════ -->
         <!--
+          ⚠️ 5.5.3 的 shardingsphere-jdbc 是"薄驱动"，规则/解析器/模式存储模块全是
+          test scope 不传递，下面 7 个必须一起引，缺任何一个都会报出与根因毫不相干的错
+          （逐个定位过程记录在 ADR-017）：
+        -->
         <dependency>
             <groupId>org.apache.shardingsphere</groupId>
             <artifactId>shardingsphere-jdbc</artifactId>
             <version>${shardingsphere.version}</version>
         </dependency>
-        -->
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-infra-url-classpath</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-sharding-core</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-parser-sql-engine-mysql</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-standalone-mode-repository-memory</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-infra-data-source-pool-hikari</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-authority-simple</artifactId>
+            <version>${shardingsphere.version}</version>
+        </dependency>
 
         <!-- ═══════════════ 测试 ═══════════════ -->
         <dependency>
@@ -159,6 +200,18 @@
         <dependency>
             <groupId>org.awaitility</groupId>
             <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>1.20.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <version>1.20.4</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

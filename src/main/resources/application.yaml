@@ -8,7 +8,7 @@ spring:
     #   driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
     url: jdbc:mysql://127.0.0.1:3306/shortlink?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
     username: root
-    password: root123
+    password: 1234
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       # 压测第 4 阶段要调这里。默认 10 在跳转链路打满时会成为瓶颈。
@@ -21,6 +21,12 @@ spring:
     redis:
       host: 127.0.0.1
       port: 6379
+      password: 1234
+      # Redis 故障降级配套（ADR-015）：命令超时收紧到 500ms。
+      # Redis 宕机时跳转链路的降级路径靠快失败控制尾部延迟——
+      # 默认超时会让 L1 miss 的请求在 Redisson 重试上拖出秒级 P99。
+      # 正常态本地 Redis 命令 P99.9 < 10ms，500ms 极安全。
+      timeout: 500ms
       lettuce:
         pool:
           max-active: 32
@@ -30,8 +36,8 @@ spring:
   rabbitmq:
     host: 127.0.0.1
     port: 5672
-    username: admin
-    password: admin123
+    username: guest
+    password: guest
     publisher-confirm-type: correlated   # 统计消息要确认，否则丢了都不知道
     publisher-returns: true
     # 连接超时必须收紧：broker 不可达时 convertAndSend 会阻塞到这个超时。
@@ -45,11 +51,15 @@ spring:
         # requeue 不能开：毒消息（格式非法）会陷入"消费-失败-回队-再消费"死循环。
         retry:
           enabled: true
-          max-attempts: 3
           initial-interval: 500
+          max-retries: 3
         default-requeue-rejected: false
         # broker 未就绪时队列不存在不算致命错误，容器会自动重连（本地无 MQ 时也能启动）
         missing-queues-fatal: false
+  web:
+    error:
+      include-exception: false
+      include-stacktrace: never
 
 mybatis-plus:
   global-config:
@@ -94,6 +104,12 @@ shortlink:
 
   risk:
     block-private-network: true
+    # 域名黑白名单（Week 5）：后缀匹配——evil.example 同时拦 evil.example 与 x.evil.example。
+    # ⚠️ 用逗号分隔的字符串而不是 YAML 列表：@Value 注入 List 只认逗号分隔标量。
+    # 生产接 URL 信誉库时可换成动态下发。留空 = 不拦。
+    blocked-domains: evil.example,phishing.test
+    # 域名白名单：非空则进入白名单模式（只放行命中域名）。默认留空不启用。
+    allowed-domains:
 
 logging:
   level:

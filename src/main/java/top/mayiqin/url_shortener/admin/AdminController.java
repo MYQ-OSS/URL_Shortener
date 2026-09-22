@@ -8,17 +8,21 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import top.mayiqin.url_shortener.idgen.SegmentIdGenerator;
+import top.mayiqin.url_shortener.link.service.ExpiredLinkCleanupJob;
+import top.mayiqin.url_shortener.risk.UrlRiskChecker;
 import top.mayiqin.url_shortener.shortcode.BloomFilterHolder;
 import top.mayiqin.url_shortener.shortcode.BloomFilterRebuilder;
 import top.mayiqin.url_shortener.stats.service.StatsCollector;
+import top.mayiqin.url_shortener.stats.service.StatsFlushService;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
  * 运维/压测辅助接口。
  *
- * <p>⚠️ 生产环境必须加鉴权或只绑内网端口。这里为了压测方便先开着。
+ * <p>受 AdminInterceptor 拦截保护，访问需在 Header 携带 'X-Admin-Token' 或 Query 携带 'token'。
  */
 @RestController
 @RequestMapping("/admin")
@@ -29,17 +33,26 @@ public class AdminController {
     private final Cache<String, String> localCache;
     private final SegmentIdGenerator idGenerator;
     private final StatsCollector statsCollector;
+    private final StatsFlushService statsFlushService;
+    private final UrlRiskChecker riskChecker;
+    private final ExpiredLinkCleanupJob cleanupJob;
 
     public AdminController(BloomFilterRebuilder rebuilder,
                            BloomFilterHolder bloomHolder,
                            Cache<String, String> localCache,
                            SegmentIdGenerator idGenerator,
-                           StatsCollector statsCollector) {
+                           StatsCollector statsCollector,
+                           StatsFlushService statsFlushService,
+                           UrlRiskChecker riskChecker,
+                           ExpiredLinkCleanupJob cleanupJob) {
         this.rebuilder = rebuilder;
         this.bloomHolder = bloomHolder;
         this.localCache = localCache;
         this.idGenerator = idGenerator;
         this.statsCollector = statsCollector;
+        this.statsFlushService = statsFlushService;
+        this.riskChecker = riskChecker;
+        this.cleanupJob = cleanupJob;
     }
 
     /**
@@ -48,7 +61,7 @@ public class AdminController {
      * <p>灌完种子数据后 BF 里没有这些短码，所有压测请求都会被 BF 判"一定不存在"直接 404。
      * 这个坑非常隐蔽——QPS 会高得离谱（因为根本没查缓存和 DB），很容易误以为优化成功。
      *
-     * <pre>curl -X POST http://localhost:8080/admin/bloom/rebuild</pre>
+     * <pre>curl -X POST <a href="http://localhost:8080/admin/bloom/rebuild">...</a></pre>
      */
     @PostMapping("/bloom/rebuild")
     public ResponseEntity<Map<String, Object>> rebuildBloom() {
@@ -100,11 +113,40 @@ public class AdminController {
         // 大于 0 说明命中了"预加载与同步取号竞态导致号段倒序"的那个坑（已被修正逻辑拦下）
         idgen.put("staleSegmentCount", idGenerator.staleSegmentCount());
 
+        // 统计链路健康度：pending 持续增长 = MQ 不可用（降级暂存中）；
+        // dropped > 0 = 暂存已满开始丢弃，必须告警——静默丢数据比丢数据更危险
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("pending", statsCollector.pendingCount());
+        stats.put("dropped", statsCollector.droppedCount());
+        stats.put("flushedRows", statsFlushService.flushedRows());
+        stats.put("lastFlushAt", statsFlushService.lastFlushAt());
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("localCache", local);
         out.put("idGenerator", idgen);
         out.put("bloomVersion", bloomHolder.version());
-        out.put("statsPending", statsCollector.pendingCount());
+        out.put("stats", stats);
         return ResponseEntity.ok(out);
+    }
+
+    /**
+     * 动态重载风控域名黑白名单。
+     */
+    @PostMapping("/risk/reload")
+    public ResponseEntity<Map<String, Object>> reloadRiskRules(
+            @org.springframework.web.bind.annotation.RequestBody Map<String, List<String>> body) {
+        List<String> blocked = body.get("blockedDomains");
+        List<String> allowed = body.get("allowedDomains");
+        riskChecker.reloadRules(blocked, allowed);
+        return ResponseEntity.ok(Map.of("status", "success", "message", "Risk rules reloaded successfully"));
+    }
+
+    /**
+     * 手动触发过期短链接与缓存清理。
+     */
+    @PostMapping("/expired/clean")
+    public ResponseEntity<Map<String, Object>> cleanExpiredLinks() {
+        long cleaned = cleanupJob.cleanupExpiredLinks();
+        return ResponseEntity.ok(Map.of("status", "success", "cleanedRows", cleaned));
     }
 }

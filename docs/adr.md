@@ -547,9 +547,284 @@ REPEATABLE READ 下同一事务内的重复 SELECT 返回同一快照，**所以
 
 ---
 
+## ADR-017 ShardingSphere 5.5.3 x Boot 4 冒烟验证：通，但要自己"拼积木"
+
+**背景**：ShardingSphere 5.5.3 无 Spring Boot 4 兼容声明，且依赖 Jackson 2.x（Boot 4 默认
+Jackson 3.x），是全方案唯一高风险未知项。独立最小工程冒烟验证（`D:\Java\Allproject\ss-smoke`）。
+
+**结论：✅ 通。** Boot 4.0.7 + Java 21 下驱动模式正常工作，Jackson 2/3 因 groupId 不同
+（`com.fasterxml.jackson` vs `tools.jackson`）可以共存，未发生冲突。
+
+**★ 但踩到一串没有文档记载的坑——5.5.3 的 `shardingsphere-jdbc` 是"薄驱动"**：
+它 POM 里的规则/方言解析器/模式存储/URL 加载器模块**全部是 test scope**，不传递给使用者，
+必须自己按需引入。缺失时的报错完全看不出根因，逐个定位过程：
+
+| 缺的模块 | 报错 |
+|---|---|
+| `shardingsphere-infra-url-classpath` | SPI-00001: No implementation ... URLLoader with type 'classpath:' |
+| `shardingsphere-sharding-core` | YAMLException: Invalid tag: !SHARDING |
+| `shardingsphere-infra-data-source-pool-hikari` | StorageUnit 构造 NPE（不认识 HikariDataSource 的 jdbcUrl 属性名） |
+| `shardingsphere-authority-simple` | SPI-00001: PrivilegeProvider with type 'ALL_PERMITTED' |
+| `shardingsphere-parser-sql-engine-mysql` | SQL 方言解析失败 |
+| `shardingsphere-standalone-mode-repository-memory` | mode repository 缺失 |
+
+**第二个坑：`HASH_MOD` 是 auto 分片算法**，只能配 `autoTables`；配在
+`tables + actualDataNodes` 上报 "can not use auto sharding algorithm"。
+标准 tables 要用 INLINE：`t_link_$->{(short_uri.hashCode() % 8 + 8) % 8}`
+（注意 Java hashCode 可为负，必须 `(x % 8 + 8) % 8` 修正，否则表后缀出现负数）。
+
+**验收证据**（sql-show 日志）：
+```
+按分片键：Logic SQL: SELECT ... WHERE short_uri = ?
+          Actual SQL: ds_0 ::: SELECT ... FROM t_link_6 WHERE ... ← 单表命中 ✅
+按 gid：  Actual SQL: ... t_link_0 UNION ALL ... t_link_7        ← 广播 8 表 ❌
+```
+按 gid 的广播查询实景，正是 ADR-005 异构索引表要消掉的问题。
+
+**决策**：Week 4 按原计划接 ShardingSphere（模块清单已固化在主工程 pom.xml 注释里）。
+**放弃了什么**：没有走 Plan B（手写分片路由）。但保留它作为对照方案讲——
+"官方驱动的模块化拆分让集成成本高于预期，如果再来一次我会先评估手写路由的 100 行代码"。
+
+---
+
+## ADR-019 创建链路事务边界：一次压测炸出的"连接池自饿"
+
+**背景**：`create()` 最初整方法挂 `@Transactional`，冒烟全过。Week 2 压测创建链路
+（50 并发）时 **5 QPS、145 个 5xx**——低并发永远发现不了的问题，一压就炸。
+
+**根因**：取号 `nextId()` 内部是 `REQUIRES_NEW`（ADR-011 要求取号独立提交）。
+它会**挂起外层 `create()` 的事务，再从同一个 Hikari 池里拿第二条连接**。
+于是每个在途请求同时占 2 条连接：50 并发需要 100 条，池只有 20 →
+所有持连接者都在等一条永远腾不出的连接 → 集体 3s `connection-timeout` 5xx。
+这是经典的**连接池自饿（self-starvation）**。
+
+**考虑过的方案**
+
+| 方案 | 结论 |
+|---|---|
+| 调大 `maximum-pool-size` 到 ≥2×并发 | ❌ 治标：并发再高照样炸，还翻倍占 DB 连接 |
+| 取号改成 `REQUIRED` 并入外层事务 | ❌ 违反 ADR-011——业务回滚会把 `max_id` 一起回滚，号段重复 |
+| **收窄事务边界：只包落库** | ✅ 采用 |
+
+**决策**：风控 / 幂等查询 / 取号 / 生成短码都不需要事务，全部移到事务外；
+用 `TransactionTemplate` 只包住 `insert`（Week 4 扩成"落库 + 本地消息表"同一事务）。
+任一时刻每请求最多占 1 条连接。
+
+**数据依据**：修复后同样 50 并发，创建 **5 QPS → 1,305 QPS，39,172 条 0 失败**，
+`syncLoadCount` 仅 1（预加载跟得上）。
+
+**教训**：`REQUIRES_NEW` / `REQUIRES_NEW`-like 的嵌套事务会**双倍占用连接池**，
+这是比"事务传播行为"八股更实际的考点——它不体现在代码正确性上，只体现在并发压测里。
+
+---
+
+## ADR-020 MQ 宕机降级：光"本地暂存"不够，还要"熔断"
+
+**背景**：设计契约是"统计绝不能影响跳转"。Week 1 冒烟验证过"RabbitMQ 停机，
+跳转仍返回 302、统计降级暂存"，以为这条稳了。**Week 2 压测把它打穿了。**
+
+**实测**（停 RabbitMQ，200 VU 压跳转）：
+
+| | 跳转 QPS | P50 | 302 占比 |
+|---|---|---|---|
+| broker 正常 | 16,117 | 8.6 ms | 100% |
+| **broker 宕机（修复前）** | **155** | **1,277 ms** | 100% |
+
+302 占比确实还是 100%（功能没坏），**但 QPS 崩了 100 倍**。根因：
+`convertAndSend` 在**请求线程**上同步执行，broker 不可达时阻塞到
+`connection-timeout`（yaml 里特意收紧到 2s）才抛异常走 `bufferLocally`。
+**"降级本地暂存"救得了数据（pending 增长、0 丢失），救不了延迟。**
+
+**决策**：给 `StatsCollector.send` 加**时间型半开熔断**——
+一次发送失败即熔断 3 秒，期间 `record()` 不再碰 MQ、直接进本地暂存（O(1) 无阻塞）；
+到期后第一个请求试探性真发，成功即自然恢复，失败再熔断一轮。零外部依赖。
+`replayBuffered` 在熔断打开时也直接跳过本轮（否则调度线程每轮白等 2s）。
+
+**放弃了什么**：熔断期间最多丢 3 秒的"试探窗口"内可能恢复的投递机会——
+可接受，补投机制（`replayBuffered`）会在 MQ 恢复后把暂存全部补上。
+
+**教训**：验证"故障不影响主链路"必须**在压测流量下**做，而不是冒烟。
+冒烟只验功能（302 还在），压测才验吞吐（QPS 是否还在）。**降级要降在延迟上，不只是数据上。**
+
+---
+
+## ADR-021 short_uri 必须用 utf8mb4_bin：collation 大小写碰撞
+
+**背景**：灌 100 万种子数据时，第 15 万行附近报
+`Duplicate entry 'HNHtrJ' for key 'uk_short_uri'`。
+
+**根因**：建表没给 `short_uri` 指定 collation，继承了库默认 `utf8mb4_0900_ai_ci`——
+**大小写不敏感**。唯一索引把 `HNhTRj` 和 `HNHtrJ` 当成同一个键，
+`WHERE short_uri=?` 也会跨大小写命中。而 Base62 短码的大小写是有意义的
+（62 个字符含大小写字母），等于把 62^6 的编码空间按大小写折叠了。
+
+**决策**：`t_link` / `t_link_goto` / `t_link_stats_daily` 三处 `short_uri`
+统一 `COLLATE utf8mb4_bin`（大小写、按字节比较）。修复后 100 万短码全唯一。
+
+**教训**：凡是"大小写敏感的自然键"（短码、token、邀请码）都必须显式 `_bin`，
+不能信库默认 collation。这类 bug 灌真实规模数据才暴露——**又是"压测/灌数才发现"一类**。
+
+---
+
+## ADR-022 Lettuce 连接池要 commons-pool2，否则配置被静默忽略
+
+**背景**：`application.yaml` 配了 `spring.data.redis.lettuce.pool.max-active: 32`，
+看起来连接池已就位。**但 classpath 里没有 `commons-pool2`。**
+
+**根因**：Spring Data Redis 的 Lettuce 池化**依赖 commons-pool2**；缺了它，
+`lettuce.pool.*` 配置被**静默忽略**（不报错、不警告），Lettuce 退化为
+"所有线程共用一条连接"。低并发无感，200 并发下 Redis 命令被串行化。
+
+**决策**：pom 显式引入 `org.apache.commons:commons-pool2`（版本随 Boot BOM）。
+
+**教训**：这是典型的"**配置写了 ≠ 配置生效**"。Lettuce 默认单连接复用（Netty 多路复用）
+在多数场景够用，但既然写了池化配置，就必须让它真生效——否则排查性能时会盯着一个
+根本没起作用的参数。**验证配置是否生效，比写下配置更重要。**
+
+---
+
+## ADR-023 统计"每请求同步 publish"是吞吐瓶颈：异步批量投递（Week 5 已实现，1,185→12,831 QPS）
+
+**背景**：ADR-020 的熔断解决了"MQ 宕机"时的阻塞，但压测发现**即便 broker 健康，
+"完整形态"（统计开）的跳转 QPS 也只有 ~1.2k**，远低于统计关的 16,117。
+
+**逐层归因**（同一台机、同 200 VU、只变统计投递方式）：
+
+| 形态 | QPS | 相对统计关 |
+|---|---|---|
+| 统计关（纯跳转） | 16,117 | 100% |
+| 统计开 + 只缓冲不投递（MQ 宕机+熔断） | 9,916 | -38% |
+| 统计开 + 同步投递（关 confirms） | 3,165 | -80% |
+| 统计开 + 同步投递（开 confirms，默认） | ~1,185 | -93% |
+
+**根因**：`record()` 在**请求线程**上同步 `convertAndSend`，200 线程争抢 AMQP channel
+（单连接多路复用 + channel 缓存），叠加 `publisher-confirm-type: correlated` 的确认开销。
+把 channel 缓存从 25 调到 256 **反而恶化**（450 QPS、P99 6.5s）——证明瓶颈不在 channel 数量，
+而在"每请求一次同步网络 publish"这个模型本身。
+
+**决策**：**异步批量投递**——请求线程只把序列化后的事件放进有界内存队列
+（O(1)、无网络），后台 publisher 线程组持续 drain 并逐条 `convertAndSend`；
+broker 故障时熔断退避（复用 ADR-020 的时间型半开熔断），队列积压到上限后丢弃并计数。
+"本地暂存"从异常降级路径变成了**常态主路径**。
+
+**实现后实测（2026-08-04）**：
+
+| 指标 | 改造前（同步 publish） | 改造后（异步 publisher×4） |
+|---|---|---|
+| 完整形态 QPS | ~1,185 | **12,831（10.8x）** |
+| P50 | ~97ms | **11.3ms** |
+| 统计完整性 | 同 | 常规负载无损（300 次跳转 → pv 精确 300，pending=0） |
+
+**放弃了什么**：
+1. 没有在 Week 2/3 就重构——先用熔断止住"宕机即崩"的血，把"健康但慢"的优化排到
+   可观测性周（Week 5），避免一次改太多变量。**先止血，再优化。**
+2. 极端负载下的统计完整性：本机 CPU 饱和（实测 92-97%）时 publisher 跟不上 12.8k/s
+   的事件生成速率，有界队列会按上限丢弃（dropped 指标暴露）。**统计丢一点可以，
+   跳转挂了不行**——这正是第一契约。生产上有 CPU 余量或独立部署统计组件即可消除。
+
+**教训**：ADR-020 说"降级要降在延迟上"；本条进一步说明——**光有降级不够，
+降级路径（本地暂存）应该是常态快路径，而不是异常路径**。把"缓冲 + 批量发"做成主路径，
+同步 publish 只作为缓冲的消费端，才能同时满足"不影响跳转"和"统计不丢"。
+
+---
+
+## ADR-024 Week 4 分库分表落地：2 库 × 8 表 + 异构索引 + 本地消息表（实测踩坑记录）
+
+**背景**：按 ADR-005 把 t_link 按 short_uri 分 2 库 × 8 表（16 分片），
+t_link_goto 按 gid 分片做异构索引，本地消息表保证双写最终一致。
+ADR-017 冒烟只验了"分片表"，这次真接入又踩到一串新坑。
+
+**分片表达式（全系统唯一出处，改一处必须全改）**：
+```
+shard16 = (hashCode() % 16 + 16) % 16     ← +16 修正 Java hashCode 可为负
+ds = shard16 / 8    tbl = shard16 % 8
+```
+t_link / t_link_goto / t_local_message 三套 INLINE 算法都从它派生。
+
+**★ 坑 1：单表必须显式声明 `!SINGLE` 规则 + 通配注册，否则 TableNotFound**
+`sql/sharding_schema_gen.sql` 里 t_id_segment、t_link_stats_daily 只放 shortlink_0
+（不参与分片）。接入后取号直接报
+`TableNotFoundException: Table or view 't_id_segment' does not exist`——
+5.5.3 **不会自动路由单表**。修法：
+```yaml
+- !SINGLE
+  tables: [ "ds_0.*" ]        # 通配把 ds_0 的非分片表纳入管理、加载元数据
+  defaultDataSource: ds_0
+```
+只写 `- !SINGLE` 不带 tables 不够，元数据仍不加载。**单表路由是配出来的，不是默认行为。**
+
+**★ 坑 2：本地消息表的分片键必须是 short_uri，才能和 t_link 同库事务**
+本地消息表模式的前提是"业务表 + 消息表同库事务"。t_link 按 short_uri 分片，
+所以 t_local_message 加了 `shard_key CHAR(6)` 列存 short_uri，用<b>同一个</b>
+分片表达式（sharding.yaml 的 msg_* 与 uri_*）——两条 INSERT 必然落同一库，
+一个本地事务写完，零分布式事务框架。补偿任务 `UPDATE ... WHERE id=? AND shard_key=?`
+也要带 shard_key，否则退化成 16 分片广播。
+
+**★ 坑 3：号段表绝不能配成广播表**
+t_id_segment 是乐观锁 CAS 推进 max_id。广播表会把同一条 UPDATE 发到两个库各推一次，
+max_id 直接写花、号段重复。**号段表只能是单库单表**（放 shortlink_0，走单表路由）。
+
+**数据迁移**：100 万存量数据用纯 SQL 迁移（`sql/sharding_migrate.sql`），
+写了 `fn_jhash` 复刻 Java `String.hashCode`（仅对 ASCII 键安全，short_uri/gid 都是）。
+迁移后逐分片求和 = 源表 1,039,194，并抽查 bI2Enc→ds1.tbl7 等与 Java hashCode 逐位一致。
+**跨语言哈希必须交叉验证，不能想当然。**
+
+**验收数据（sql-show 日志实测，全部无广播）**：
+- 跳转 `WHERE short_uri=?` → `ds_1 ::: t_link_7` 单表命中
+- 创建双写 → `ds_0 ::: t_link_6` + `ds_0 ::: t_local_message_6` **同库同片**（本地事务）
+- 补偿写 goto → 按 gid 单分片
+- 列表两步：`t_link_goto_0 WHERE gid=?` 单片 → `t_link_6 WHERE short_uri IN(?)` 单片
+- 号段取号、统计落库（单表路由到 shortlink_0）0 错误
+
+**放弃了什么**：管理链路列表查询变两步（先 goto 后回查），且最终一致（新建短链要等
+补偿任务同步进 goto 才出现在列表，秒级）——管理场景可接受，换来跳转主链路零广播 + 可扩容。
+
+---
+
+## ADR-015 故障降级矩阵：三类依赖宕机的实测行为与恢复 SOP（Week 5 演练数据）
+
+**背景**：简历上"稳定性"那条的全部支撑，来自这张**真压出来的**矩阵，不是背的。
+演练环境：本机单实例，200 VU k6，Zipf α=1.0 请求日志，统计/限流关闭隔离变量。
+
+### 降级矩阵（实测）
+
+| 停掉的依赖 | 跳转链路行为 | 实测数据 | 降级机制 |
+|---|---|---|---|
+| **RabbitMQ**（熔断修复前） | 被拖垮 | **155 QPS，P50 1,277ms**（基线 ~16k） | 无——convertAndSend 在请求线程阻塞到连接超时（ADR-020 的 bug） |
+| **RabbitMQ**（熔断修复后） | 完全不受影响 | 302=100%（与基线一致） | 异步 publisher + 时间型半开熔断；事件进有界队列，超限丢弃并计数 |
+| **Redis** | QPS 下降，**错误率 0%** | 302=100%（42,276 次）；QPS 3,819→639；P99 ~5.9s | L1 兜住热点；L1 miss 直查 DB（跳过 L2/BF/锁）；告警限频 5s/条 |
+| **MySQL** | 热数据**仍可用** | **302=98.96%**（157,150 次）；仅 1.04% 冷码回源失败 | 数据近乎不可变 + L2 TTL 30 天：热集全在缓存，不碰 DB |
+
+### 三条必须能讲清的结论
+
+1. **Redis 宕机时防穿透暂时失效是有意识的取舍**：BF 在 Redis 上，降级路径跳过它直查 DB。
+   DB 靠 `uk_short_uri` 索引硬扛点查，撑住存量查询；代价是攻击者构造海量随机短码时
+   DB 压力上升——但"跳转全挂"和"DB 压力上升"之间，选后者。
+2. **MySQL 宕机的 98.96% 不是 100%，差的那 1.04% 是冷码**（L1/L2 都没命中、必须回源）。
+   把 L2 全量预热可趋近 100%。这正好引出短链架构的真实优势：**数据近乎不可变 →
+   缓存可以设超长 TTL → DB 宕机时热数据照常服务**。
+3. **降级要降在延迟上，不只是数据上**：MQ 演练修复前的教训——"数据不丢"（本地暂存正常）
+   但"延迟爆炸"（P50 1.28s）同样等于服务不可用。见 ADR-020/023。
+
+### 恢复 SOP（演练实测，含坑）
+
+| 依赖恢复 | 动作 | 实测坑 |
+|---|---|---|
+| RabbitMQ 启动 | 无需人工干预：熔断到期试探恢复，积压事件由 publisher drain | 无 |
+| Redis 启动 | **必须 `POST /admin/bloom/rebuild`**：临时实例无持久化，BF 全丢；不重建则 version key 丢失后自动建空 BF → 全站 410 | ★ Redisson 缓存的 Lua 脚本与全新 Redis 对不上（"Unable to decode data"），**稳妥做法是重启应用**再重建 BF |
+| MySQL 启动 | 连接池自愈；但**冷启动时 Redis 必须先活**：Redisson bean 创建时 eager connect，Redis 宕机时应用无法启动 | 启动顺序：Redis → 应用 → MySQL 可后到（跳转靠缓存降级撑住） |
+
+**放弃了什么**：没做故障自愈（Redis 恢复后自动重建 BF）——重建 100 万条要 ~5 分钟，
+自动触发容易在故障反复时来回重建；手动 SOP + 告警更稳。生产上 Redis 应开持久化，
+这个 SOP 只是兜底。
+
+---
+
 ## 待补（做到时再写）
 
 - **ADR-014 热点短链治理**：Caffeine L1 + 滑动窗口热点探测 + key 打散的取舍
-- **ADR-015 故障降级矩阵**：Redis / MySQL / MQ 三类故障的降级策略与演练数据
 - **ADR-016 限流失败时放行还是拒绝**：`RateLimiter` 里选了"失败放行"，理由与配套熔断
-- **ADR-017 ShardingSphere 冒烟验证结果**：通 / 不通，以及走了哪条 Plan B
+- **ADR-018 幂等唯一索引与 forceNew 的冲突（实测发现）**：`uk_gid_url_hash` 唯一索引
+  会让 forceNew（渠道归因）必然报 Duplicate entry，且创建链路 catch 里"换短码重试"
+  对这种冲突无效。已把它降级为普通索引，幂等改为"查询优先 + 最佳努力"——与分库分表后
+  唯一索引只在单分片内生效的结论自洽（见 schema.sql 注释与 ADR-007）

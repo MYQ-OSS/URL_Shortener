@@ -57,6 +57,10 @@ DELIMITER ;
 DROP TABLE IF EXISTS t_seq_10k;
 CREATE TABLE t_seq_10k (n INT NOT NULL PRIMARY KEY) ENGINE = InnoDB;
 
+-- MySQL 默认 cte_max_recursion_depth = 1000，递归到 9999 会被中止（ERROR 3636）。
+-- 不显式调大的话，上面的建表会成功但这里插不进任何行，后续灌数静默失败。
+SET SESSION cte_max_recursion_depth = 10001;
+
 INSERT INTO t_seq_10k (n)
 WITH RECURSIVE seq AS (SELECT 0 AS n
                        UNION ALL
@@ -66,6 +70,11 @@ SELECT n FROM seq;
 -- ────────────────────────────────────────────────────────────────────────────
 -- 3. 批量灌数据
 -- ────────────────────────────────────────────────────────────────────────────
+-- seeder 假设独占 t_link：行号从 1 开始，与已有行（如冒烟测试数据）主键冲突。
+-- Docker 环境靠 `compose down -v` 重建干净卷；非 Docker 环境（本机 MySQL）
+-- 必须先清空。TRUNCATE 保留表结构，只清数据——压测数据本来就可随时重灌。
+TRUNCATE TABLE t_link;
+
 DROP PROCEDURE IF EXISTS sp_seed_links;
 DELIMITER $$
 CREATE PROCEDURE sp_seed_links(IN total BIGINT, IN batch INT)

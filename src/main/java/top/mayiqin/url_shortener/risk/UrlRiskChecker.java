@@ -39,9 +39,38 @@ public class UrlRiskChecker {
 
     private final boolean blockPrivateNetwork;
 
+    /**
+     * 域名黑名单（Week 5）。命中的是<b>域名后缀</b>：配 {@code evil.com} 会同时拦
+     * {@code evil.com} 和 {@code phish.evil.com}。小写匹配。
+     * <p>为什么是后缀而不是精确匹配：钓鱼者惯用子域名换皮
+     * （{@code login.evil.com}、{@code evil.com.attacker.cn} 这类要格外小心——
+     * 所以匹配规则必须是"等于 domain 或以 .domain 结尾"，不能用 contains/endsWith 裸写）。
+     */
+    private volatile List<String> blockedDomains;
+
+    /**
+     * 域名白名单（可选）。<b>非空时进入白名单模式</b>：只有命中的域名才允许创建，
+     * 其余一律拒。适合私有化部署只服务自家域名的场景。留空 = 不启用。
+     */
+    private volatile List<String> allowedDomains;
+
     public UrlRiskChecker(
-            @Value("${shortlink.risk.block-private-network:true}") boolean blockPrivateNetwork) {
+            @Value("${shortlink.risk.block-private-network:true}") boolean blockPrivateNetwork,
+            @Value("${shortlink.risk.blocked-domains:}") List<String> blockedDomains,
+            @Value("${shortlink.risk.allowed-domains:}") List<String> allowedDomains) {
         this.blockPrivateNetwork = blockPrivateNetwork;
+        this.blockedDomains = blockedDomains.stream().map(d -> d.toLowerCase(Locale.ROOT)).toList();
+        this.allowedDomains = allowedDomains.stream().map(d -> d.toLowerCase(Locale.ROOT)).toList();
+    }
+
+    /** 动态重载黑白名单规则。 */
+    public synchronized void reloadRules(List<String> newBlocked, List<String> newAllowed) {
+        if (newBlocked != null) {
+            this.blockedDomains = newBlocked.stream().map(d -> d.toLowerCase(Locale.ROOT)).toList();
+        }
+        if (newAllowed != null) {
+            this.allowedDomains = newAllowed.stream().map(d -> d.toLowerCase(Locale.ROOT)).toList();
+        }
     }
 
     public void check(String originUrl) {
@@ -59,10 +88,34 @@ public class UrlRiskChecker {
         if (host == null || host.isBlank()) {
             throw new IllegalArgumentException("URL 缺少 host");
         }
+        String normalizedHost = host.toLowerCase(Locale.ROOT);
+        // ★ 黑白名单放在 DNS 解析之前：纯字符串匹配、零网络开销，
+        // 而且被拉黑的域名常常已经解析不了——先查名单才能给出准确的拒绝原因。
+        if (!allowedDomains.isEmpty() && !matchesAny(normalizedHost, allowedDomains)) {
+            throw new IllegalArgumentException("目标域名不在白名单内: " + host);
+        }
+        if (matchesAny(normalizedHost, blockedDomains)) {
+            throw new IllegalArgumentException("目标域名已被风控封禁: " + host);
+        }
         if (blockPrivateNetwork && resolvesToPrivateAddress(host)) {
             throw new IllegalArgumentException("拒绝指向内网/回环地址的目标: " + host);
         }
-        // TODO Week 5：域名黑白名单、URL 信誉库、风险中间页
+    }
+
+    /**
+     * 域名后缀匹配：host == domain 或 host 以 ".domain" 结尾。
+     * 不用裸 endsWith——{@code notevil.com} 会被 {@code evil.com} 的裸 endsWith 误伤。
+     */
+    private static boolean matchesAny(String host, List<String> domains) {
+        for (String d : domains) {
+            if (d.isBlank()) {
+                continue;
+            }
+            if (host.equals(d) || host.endsWith("." + d)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -80,16 +80,35 @@ public class LinkQueryService {
     private final ShortCodeGenerator codeGenerator;
     private final LinkMapper linkMapper;
 
+    /**
+     * 压测分阶段开关（见 benchmark/README.md 2.5 的逐阶段表）：
+     * <ul>
+     *   <li>{@code l1-enabled=false, l2-enabled=false} → 裸 MySQL 基线</li>
+     *   <li>{@code l1-enabled=false, l2-enabled=true}  → 只有 Redis L2</li>
+     *   <li>两者都开（默认）→ 完整防护链</li>
+     * </ul>
+     * 生产环境保持默认全开。开关只影响本实例，用启动参数覆盖即可，不改代码。
+     */
+    private final boolean l1Enabled;
+    private final boolean l2Enabled;
+
     public LinkQueryService(Cache<String, String> localCache,
                             StringRedisTemplate redis,
                             RedissonClient redisson,
                             ShortCodeGenerator codeGenerator,
-                            LinkMapper linkMapper) {
+                            LinkMapper linkMapper,
+                            @org.springframework.beans.factory.annotation.Value("${shortlink.cache.l1-enabled:true}") boolean l1Enabled,
+                            @org.springframework.beans.factory.annotation.Value("${shortlink.cache.l2-enabled:true}") boolean l2Enabled) {
         this.localCache = localCache;
         this.redis = redis;
         this.redisson = redisson;
         this.codeGenerator = codeGenerator;
         this.linkMapper = linkMapper;
+        this.l1Enabled = l1Enabled;
+        this.l2Enabled = l2Enabled;
+        if (!l1Enabled || !l2Enabled) {
+            log.warn("缓存开关非默认状态（l1={}, l2={}）——仅限压测使用，生产必须全开", l1Enabled, l2Enabled);
+        }
     }
 
     /**
@@ -104,27 +123,53 @@ public class LinkQueryService {
         }
 
         // ── 1. L1 本地缓存 ─────────────────────────────────────────
-        String hit = localCache.getIfPresent(shortUri);
-        if (hit != null) {
-            return hit.isEmpty() ? null : hit;   // 空串是本地的空值标记
+        if (l1Enabled) {
+            String hit = localCache.getIfPresent(shortUri);
+            if (hit != null) {
+                return hit.isEmpty() ? null : hit;   // 空串是本地的空值标记
+            }
         }
 
+        if (!l2Enabled) {
+            // 压测阶段开关：绕过全部 Redis 链路（L2 / BF / 空值缓存 / 锁），直查 DB
+            return loadFromDb(shortUri);
+        }
+
+        try {
+            return resolveViaRedis(shortUri);
+        } catch (RuntimeException e) {
+            // ── Redis 故障降级（ADR-015 故障降级矩阵）──────────────────
+            // L2/BF/锁全在 Redis 上，任何一个调用抛异常都说明 Redis 不可用。
+            // 此时跳过整条 Redis 链直查 DB：QPS 下降（L1 兜住热点，其余落 DB），
+            // 但错误率保持 0——这正是"Redis 挂了跳转还能用"的演练预期。
+            // 防穿透暂时失效（BF 不可用），DB 靠索引硬扛，这是有意识的取舍。
+            redisDownWarn(e);
+            String url = loadFromDb(shortUri);
+            if (url != null) {
+                putLocal(shortUri, url);   // L1 还能暖一点是一点
+            }
+            return url;
+        }
+    }
+
+    /** L2 → BF → 空值缓存 → 锁 → 回源 → 回写。Redis 故障时由调用方捕获降级。 */
+    private String resolveViaRedis(String shortUri) {
         // ── 2. L2 Redis ───────────────────────────────────────────
         String cached = redis.opsForValue().get(KEY_LINK + shortUri);
         if (cached != null) {
-            localCache.put(shortUri, cached);
+            putLocal(shortUri, cached);
             return cached;
         }
 
         // ── 3. 布隆过滤器：false 表示一定不存在 ──────────────────────
         if (!codeGenerator.mightExist(shortUri)) {
-            localCache.put(shortUri, "");
+            putLocal(shortUri, "");
             return null;
         }
 
         // ── 4. 空值缓存 ────────────────────────────────────────────
         if (Boolean.TRUE.equals(redis.hasKey(KEY_NULL + shortUri))) {
-            localCache.put(shortUri, "");
+            putLocal(shortUri, "");
             return null;
         }
 
@@ -144,22 +189,40 @@ public class LinkQueryService {
             // 双重检查：等锁期间可能已经有人回写了
             String again = redis.opsForValue().get(KEY_LINK + shortUri);
             if (again != null) {
-                localCache.put(shortUri, again);
+                putLocal(shortUri, again);
                 return again;
             }
             String url = loadFromDb(shortUri);
             if (url == null) {
                 redis.opsForValue().set(KEY_NULL + shortUri, "1", TTL_NULL);
-                localCache.put(shortUri, "");
+                putLocal(shortUri, "");
             } else {
                 redis.opsForValue().set(KEY_LINK + shortUri, url, TTL_LINK);
-                localCache.put(shortUri, url);
+                putLocal(shortUri, url);
             }
             return url;
         } finally {
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
             }
+        }
+    }
+
+    /** Redis 故障告警限频：高并发下每请求都打日志等于二次雪崩，5 秒最多一条。 */
+    private final java.util.concurrent.atomic.AtomicLong lastRedisWarnAt = new java.util.concurrent.atomic.AtomicLong();
+
+    private void redisDownWarn(RuntimeException e) {
+        long now = System.currentTimeMillis();
+        long last = lastRedisWarnAt.get();
+        if (now - last > 5000 && lastRedisWarnAt.compareAndSet(last, now)) {
+            log.warn("Redis 故障，跳转链路降级为直查 DB（L2/BF/锁暂不可用）: {}", e.getMessage());
+        }
+    }
+
+    /** L1 写入统一走这里：压测开关关闭时不碰本地缓存。 */
+    private void putLocal(String shortUri, String value) {
+        if (l1Enabled) {
+            localCache.put(shortUri, value);
         }
     }
 
@@ -186,15 +249,32 @@ public class LinkQueryService {
      * 两层各解决一半问题。见 {@code CacheInvalidateListener}。
      */
     public void invalidate(String shortUri) {
-        redis.delete(KEY_LINK + shortUri);
-        redis.delete(KEY_NULL + shortUri);
-        localCache.invalidate(shortUri);
-        redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
+        if (l2Enabled) {
+            try {
+                redis.delete(KEY_LINK + shortUri);
+                redis.delete(KEY_NULL + shortUri);
+                redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
+            } catch (RuntimeException e) {
+                // Redis 故障时广播失效：本实例下面照样清 L1，其他实例靠 5s TTL 兜底
+                redisDownWarn(e);
+            }
+        }
+        if (l1Enabled) {
+            localCache.invalidate(shortUri);
+        }
     }
 
     /** 创建成功后预热：这是消掉"空值缓存导致新短链 404"窗口的关键。 */
     public void warmUp(String shortUri, String originUrl) {
-        redis.delete(KEY_NULL + shortUri);
-        redis.opsForValue().set(KEY_LINK + shortUri, originUrl, TTL_LINK);
+        if (!l2Enabled) {
+            return;   // 压测阶段关闭 L2 时没有可预热的东西
+        }
+        try {
+            redis.delete(KEY_NULL + shortUri);
+            redis.opsForValue().set(KEY_LINK + shortUri, originUrl, TTL_LINK);
+        } catch (RuntimeException e) {
+            // Redis 故障时预热失败：首次访问会 miss → 直查 DB（降级路径）兜住
+            redisDownWarn(e);
+        }
     }
 }

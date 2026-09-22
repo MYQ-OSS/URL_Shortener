@@ -52,7 +52,13 @@ public class BloomFilterHolder {
 
     @PostConstruct
     public void init() {
-        refresh();
+        // ★ 启动期容错：Redis 宕机时也要能启动（BF 不可用由跳转链路的降级路径兜住，
+        //   见 LinkQueryService 的 Redis 故障降级）。否则 Redis 故障时连重启都做不到。
+        try {
+            refresh();
+        } catch (RuntimeException e) {
+            log.warn("启动时布隆过滤器初始化失败（Redis 可能不可用），等待定时任务重试: {}", e.getMessage());
+        }
     }
 
     /** 热路径调用：只读本地 volatile 字段，无网络开销。 */
@@ -60,7 +66,9 @@ public class BloomFilterHolder {
         RBloomFilter<String> bf = active;
         if (bf == null) {
             synchronized (this) {
-                refresh();
+                // doRefresh 失败会向上抛：由跳转链路的 Redis 降级路径捕获（限频告警），
+                // 不能在这里吞掉后返回 null——那会变成热路径上每请求一次 NPE。
+                doRefresh();
                 bf = active;
             }
         }
@@ -81,6 +89,16 @@ public class BloomFilterHolder {
     /** 定时对版本号，让其他实例触发的重建在 30 秒内被本实例感知。 */
     @Scheduled(fixedDelay = 30_000L, initialDelay = 30_000L)
     public void refresh() {
+        try {
+            doRefresh();
+        } catch (RuntimeException e) {
+            // Redis 故障时只留一行信号，不打堆栈（30s 一次的噪音没意义）。
+            // active 保持旧值：BF 数据虽不可达，但跳转链路有自己的降级路径兜底。
+            log.warn("布隆过滤器版本对账失败（Redis 可能不可用）: {}", e.getMessage());
+        }
+    }
+
+    private void doRefresh() {
         Object v = redisson.getBucket(BloomFilterRebuilder.KEY_VERSION).get();
         int remote = v == null ? 1 : Integer.parseInt(v.toString());
         if (remote != activeVersion) {

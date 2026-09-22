@@ -34,17 +34,26 @@ public class RateLimiter {
     private final StringRedisTemplate redis;
     private final DefaultRedisScript<Long> tokenBucketScript;
 
+    /**
+     * 限流总开关。压测时关闭（{@code shortlink.rate-limit.enabled=false}），
+     * 否则测的是限流器自己的吞吐而不是跳转链路的吞吐——而且限流的 Lua EVAL
+     * 本身每请求一次 Redis，会污染"裸 MySQL 基线"的读数。生产环境必须开启。
+     */
+    private final boolean enabled;
+
     private final int createCapacity;
     private final int createRefillPerSec;
     private final int redirectCapacity;
     private final int redirectRefillPerSec;
 
     public RateLimiter(StringRedisTemplate redis,
+                       @Value("${shortlink.rate-limit.enabled:true}") boolean enabled,
                        @Value("${shortlink.rate-limit.create.capacity:20}") int createCapacity,
                        @Value("${shortlink.rate-limit.create.refill-per-sec:10}") int createRefill,
                        @Value("${shortlink.rate-limit.redirect.capacity:200}") int redirectCapacity,
                        @Value("${shortlink.rate-limit.redirect.refill-per-sec:100}") int redirectRefill) {
         this.redis = redis;
+        this.enabled = enabled;
         this.createCapacity = createCapacity;
         this.createRefillPerSec = createRefill;
         this.redirectCapacity = redirectCapacity;
@@ -57,10 +66,16 @@ public class RateLimiter {
     }
 
     public boolean tryAcquireCreate(String gid) {
+        if (!enabled) {
+            return true;
+        }
         return acquire("rl:create:" + gid, createCapacity, createRefillPerSec);
     }
 
     public boolean tryAcquireRedirect(String ip, String shortUri) {
+        if (!enabled) {
+            return true;
+        }
         return acquire("rl:rd:" + ip + ":" + shortUri, redirectCapacity, redirectRefillPerSec);
     }
 

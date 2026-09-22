@@ -8,11 +8,13 @@ import lombok.Data;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import top.mayiqin.url_shortener.link.entity.Link;
 import top.mayiqin.url_shortener.link.service.LinkCreateService;
-import top.mayiqin.url_shortener.link.service.LinkQueryService;
+import top.mayiqin.url_shortener.link.service.LinkManageService;
 import top.mayiqin.url_shortener.ratelimit.RateLimiter;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /** 管理接口。QPS 低，可以"重"。 */
 @RestController
@@ -20,14 +22,14 @@ import java.time.LocalDateTime;
 public class LinkController {
 
     private final LinkCreateService createService;
-    private final LinkQueryService queryService;
+    private final LinkManageService manageService;
     private final RateLimiter rateLimiter;
 
     public LinkController(LinkCreateService createService,
-                          LinkQueryService queryService,
+                          LinkManageService manageService,
                           RateLimiter rateLimiter) {
         this.createService = createService;
-        this.queryService = queryService;
+        this.manageService = manageService;
         this.rateLimiter = rateLimiter;
     }
 
@@ -44,12 +46,28 @@ public class LinkController {
         return ResponseEntity.ok(shortUrl);
     }
 
-    /** 禁用短链。要求秒级生效，所以必须清多级缓存 + 广播。 */
+    /** 禁用短链。要求秒级生效：先改 DB，再清多级缓存 + 广播（顺序理由见 LinkManageService）。 */
     @PostMapping("/{shortUri}/disable")
     public ResponseEntity<Void> disable(@PathVariable String shortUri) {
-        // TODO Week 4：先更新 DB enable_status，再走 invalidate
-        queryService.invalidate(shortUri);
-        return ResponseEntity.noContent().build();
+        boolean ok = manageService.updateStatus(shortUri, LinkManageService.STATUS_DISABLED_BY_USER);
+        return ok ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+    }
+
+    /** 恢复被禁用的短链。 */
+    @PostMapping("/{shortUri}/enable")
+    public ResponseEntity<Void> enable(@PathVariable String shortUri) {
+        boolean ok = manageService.updateStatus(shortUri, LinkManageService.STATUS_ENABLED);
+        return ok ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * 按 gid 列出短链。走 t_link_goto 异构索引两步查询（ADR-005）：
+     * 单分片拿短码 → 按分片键回查主表，全程无广播。
+     */
+    @GetMapping("/list")
+    public ResponseEntity<List<Link>> list(@RequestParam @NotBlank String gid,
+                                           @RequestParam(defaultValue = "20") int limit) {
+        return ResponseEntity.ok(manageService.listByGid(gid, limit));
     }
 
     @Data

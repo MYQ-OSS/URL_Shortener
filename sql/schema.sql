@@ -26,10 +26,16 @@ SET NAMES utf8mb4;
 --        建不了索引。BINARY(16) 定长 16 字节，还比 CHAR(32) 存十六进制省一半。
 --
 --    (4) `describe` 是 MySQL 保留字，必须加反引号。
+--
+--    (5) ★ short_uri 必须用 utf8mb4_bin（大小写敏感）。
+--        默认 collation utf8mb4_0900_ai_ci 大小写不敏感：唯一索引会把
+--        'HNhTRj' 和 'HNHtrJ' 当成同一个键，WHERE short_uri=? 也会跨大小写命中——
+--        而 Base62 短码的大小写是有意义的（62 个字符含大小写字母）。
+--        实测灌 100 万种子数据时在第 15 万行附近即发生碰撞。
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS t_link (
   id            BIGINT        NOT NULL                     COMMENT '号段发号器 ID，趋势递增',
-  short_uri     CHAR(6)       NOT NULL                     COMMENT '短码，不含域名。定长 6 位',
+  short_uri     CHAR(6)       NOT NULL COLLATE utf8mb4_bin COMMENT '短码，不含域名。定长 6 位，大小写敏感',
   domain        VARCHAR(64)   NOT NULL DEFAULT 'localhost:8080',
   origin_url    VARCHAR(2048) NOT NULL,
   url_hash      BINARY(16)    NOT NULL                     COMMENT 'MD5(origin_url)，幂等判断用',
@@ -45,8 +51,15 @@ CREATE TABLE IF NOT EXISTS t_link (
   del_flag      TINYINT       NOT NULL DEFAULT 0           COMMENT '逻辑删除，保留历史统计数据',
   PRIMARY KEY (id),
   UNIQUE KEY uk_short_uri (short_uri),
-  -- 幂等：同一分组 + 同一长链只生成一个短码（forceNew=true 时跳过）
-  UNIQUE KEY uk_gid_url_hash (gid, url_hash),
+  -- 幂等查询索引（gid + url_hash）。
+  -- ⚠️ 这里必须是普通索引而不是唯一索引——实测发现的设计冲突：
+  --   forceNew=true（渠道归因：同一落地页生成多个短码分投不同渠道）要求
+  --   同一 (gid, url_hash) 允许多行，唯一索引会让 forceNew 必然报 Duplicate entry。
+  -- 幂等因此退为"查询优先 + 最佳努力"：极端并发下同一长链可能生成两个短码，
+  --   两个短码都能正常跳转，业务上可接受（ADR-007 的解法 3；也与分库分表后
+  --   "唯一索引只在单分片内生效、本来就拦不住跨分片重复"的结论自洽）。
+  -- uk_short_uri 的唯一性不受影响——那是短码防撞的兜底，绝不能动。
+  KEY idx_gid_url_hash (gid, url_hash),
   KEY idx_gid_create (gid, create_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '短链主表';
 
@@ -92,7 +105,7 @@ ON DUPLICATE KEY UPDATE biz_tag = biz_tag;
 CREATE TABLE IF NOT EXISTS t_link_goto (
   id        BIGINT      NOT NULL AUTO_INCREMENT,
   gid       VARCHAR(32) NOT NULL,
-  short_uri CHAR(6)     NOT NULL,
+  short_uri CHAR(6)     NOT NULL COLLATE utf8mb4_bin COMMENT '大小写敏感，与 t_link 一致',
   PRIMARY KEY (id),
   UNIQUE KEY uk_gid_uri (gid, short_uri)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'gid -> short_uri 异构索引';
@@ -108,6 +121,7 @@ CREATE TABLE IF NOT EXISTS t_link_goto (
 CREATE TABLE IF NOT EXISTS t_local_message (
   id          BIGINT       NOT NULL AUTO_INCREMENT,
   biz_type    VARCHAR(32)  NOT NULL              COMMENT 'LINK_GOTO_SYNC 等',
+  shard_key   CHAR(6)      NOT NULL COLLATE utf8mb4_bin COMMENT '分片键 short_uri，与 t_link 同分片表达式',
   payload     VARCHAR(512) NOT NULL,
   status      TINYINT      NOT NULL DEFAULT 0    COMMENT '0待处理 1成功 2超过重试上限',
   retry_count TINYINT      NOT NULL DEFAULT 0,
@@ -128,7 +142,7 @@ CREATE TABLE IF NOT EXISTS t_local_message (
 -- ────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS t_link_stats_daily (
   id        BIGINT  NOT NULL AUTO_INCREMENT,
-  short_uri CHAR(6) NOT NULL,
+  short_uri CHAR(6) NOT NULL COLLATE utf8mb4_bin COMMENT '大小写敏感，与 t_link 一致',
   stat_date DATE    NOT NULL,
   hour      TINYINT NOT NULL DEFAULT -1  COMMENT '-1=全天汇总，0-23=小时维度',
   pv        INT     NOT NULL DEFAULT 0,
@@ -140,29 +154,22 @@ CREATE TABLE IF NOT EXISTS t_link_stats_daily (
 
 
 -- ════════════════════════════════════════════════════════════════════════════
---  Week 4 分表建表（接 ShardingSphere 时用，把上面的 t_link / t_link_goto 换掉）
+--  Week 4 分表（已落地，实际脚本见同目录，不再是下面这段示意伪代码）
 --
---  分片规模：t_link 2 库 × 8 表 = 16 分片
---  这个规模足够展示问题（广播查询、跨分片分页、全局唯一索引失效），
---  又不至于让本地环境跑不起来。
+--  分片规模：t_link 2 库 × 8 表 = 16 分片（shortlink_0 / shortlink_1）
 --
---  验收标准：打开 ShardingSphere SQL 日志，跳转和列表查询都不能出现 16 条 SQL。
--- ════════════════════════════════════════════════════════════════════════════
--- 在 shortlink_0 / shortlink_1 两个库里各建 t_link_0 ~ t_link_7：
+--  ★ 实际执行的三个脚本（2026-08-03 已在本机跑通）：
+--    1) sharding_schema_gen.sql   建 16×3 张分表 + 单表（号段/统计放 shortlink_0）
+--    2) sharding_migrate.sql      fn_jhash 复刻 Java hashCode，100 万存量纯 SQL 迁移
+--    3) ../src/main/resources/sharding.yaml  分片规则（INLINE + !SINGLE 单表规则）
 --
---   DELIMITER $$
---   CREATE PROCEDURE gen_link_tables()
---   BEGIN
---     DECLARE i INT DEFAULT 0;
---     WHILE i < 8 DO
---       SET @sql = CONCAT('CREATE TABLE IF NOT EXISTS t_link_', i, ' LIKE t_link');
---       PREPARE s FROM @sql; EXECUTE s; DEALLOCATE PREPARE s;
---       SET i = i + 1;
---     END WHILE;
---   END$$
---   DELIMITER ;
---   CALL gen_link_tables();
---   DROP PROCEDURE gen_link_tables;
+--  ★ 落地踩坑（详见 ADR-024）：
+--    - 单表（t_id_segment/t_link_stats_daily）必须显式 !SINGLE 规则 + 通配注册，
+--      否则 TableNotFoundException；只写 - !SINGLE 不带 tables 还不够
+--    - 本地消息表分片键必须 = short_uri，才能和 t_link 同库事务
+--    - 号段表绝不能配广播表（CAS 会写花两个库）
+--
+--  验收标准（已达成）：打开 ShardingSphere SQL 日志，跳转和列表查询零广播。
 --
 -- ⚠️ 分表后 uk_gid_url_hash 只在单个分片内生效！
 --    t_link 按 short_uri 分片，而幂等判断按 url_hash —— 同一长链两次创建会拿到

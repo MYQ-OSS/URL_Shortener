@@ -1,0 +1,298 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: /mnt/d/Java/Allproject/URL_Shortener/benchmark/k6/redirect.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 200 max VUs, 1m15s max duration (incl. graceful stop):
+              * default: 200 looping VUs for 45s (gracefulStop: 30s)
+
+
+running (0m01.0s), 200/200 VUs, 6964 complete and 0 interrupted iterations
+default   [   2% ] 200 VUs  01.0s/45s
+
+running (0m02.0s), 200/200 VUs, 14269 complete and 0 interrupted iterations
+default   [   4% ] 200 VUs  02.0s/45s
+
+running (0m03.0s), 200/200 VUs, 21831 complete and 0 interrupted iterations
+default   [   7% ] 200 VUs  03.0s/45s
+
+running (0m04.0s), 200/200 VUs, 26806 complete and 0 interrupted iterations
+default   [   9% ] 200 VUs  04.0s/45s
+
+running (0m05.0s), 200/200 VUs, 27623 complete and 0 interrupted iterations
+default   [  11% ] 200 VUs  05.0s/45s
+
+running (0m06.0s), 200/200 VUs, 27778 complete and 0 interrupted iterations
+default   [  13% ] 200 VUs  06.0s/45s
+
+running (0m07.0s), 200/200 VUs, 28007 complete and 0 interrupted iterations
+default   [  16% ] 200 VUs  07.0s/45s
+
+running (0m08.0s), 200/200 VUs, 28468 complete and 0 interrupted iterations
+default   [  18% ] 200 VUs  08.0s/45s
+
+running (0m09.0s), 200/200 VUs, 28490 complete and 0 interrupted iterations
+default   [  20% ] 200 VUs  09.0s/45s
+
+running (0m10.0s), 200/200 VUs, 28523 complete and 0 interrupted iterations
+default   [  22% ] 200 VUs  10.0s/45s
+
+running (0m11.0s), 200/200 VUs, 29399 complete and 0 interrupted iterations
+default   [  24% ] 200 VUs  11.0s/45s
+
+running (0m12.0s), 200/200 VUs, 31027 complete and 0 interrupted iterations
+default   [  27% ] 200 VUs  12.0s/45s
+
+running (0m13.0s), 200/200 VUs, 31442 complete and 0 interrupted iterations
+default   [  29% ] 200 VUs  13.0s/45s
+
+running (0m14.0s), 200/200 VUs, 31963 complete and 0 interrupted iterations
+default   [  31% ] 200 VUs  14.0s/45s
+
+running (0m15.0s), 200/200 VUs, 32783 complete and 0 interrupted iterations
+default   [  33% ] 200 VUs  15.0s/45s
+
+running (0m16.0s), 200/200 VUs, 33200 complete and 0 interrupted iterations
+default   [  36% ] 200 VUs  16.0s/45s
+
+running (0m17.0s), 200/200 VUs, 33604 complete and 0 interrupted iterations
+default   [  38% ] 200 VUs  17.0s/45s
+
+running (0m18.0s), 200/200 VUs, 34578 complete and 0 interrupted iterations
+default   [  40% ] 200 VUs  18.0s/45s
+
+running (0m19.0s), 200/200 VUs, 35300 complete and 0 interrupted iterations
+default   [  42% ] 200 VUs  19.0s/45s
+
+running (0m20.0s), 200/200 VUs, 38318 complete and 0 interrupted iterations
+default   [  44% ] 200 VUs  20.0s/45s
+
+running (0m21.0s), 200/200 VUs, 45484 complete and 0 interrupted iterations
+default   [  47% ] 200 VUs  21.0s/45s
+
+running (0m22.0s), 200/200 VUs, 52724 complete and 0 interrupted iterations
+default   [  49% ] 200 VUs  22.0s/45s
+
+running (0m23.0s), 200/200 VUs, 58633 complete and 0 interrupted iterations
+default   [  51% ] 200 VUs  23.0s/45s
+
+running (0m24.0s), 200/200 VUs, 62606 complete and 0 interrupted iterations
+default   [  53% ] 200 VUs  24.0s/45s
+
+running (0m25.0s), 200/200 VUs, 67281 complete and 0 interrupted iterations
+default   [  56% ] 200 VUs  25.0s/45s
+
+running (0m26.0s), 200/200 VUs, 72390 complete and 0 interrupted iterations
+default   [  58% ] 200 VUs  26.0s/45s
+
+running (0m27.0s), 200/200 VUs, 78941 complete and 0 interrupted iterations
+default   [  60% ] 200 VUs  27.0s/45s
+
+running (0m30.3s), 200/200 VUs, 86057 complete and 0 interrupted iterations
+default   [  62% ] 200 VUs  28.0s/45s
+
+running (0m28.8s), 200/200 VUs, 94489 complete and 0 interrupted iterations
+default   [  64% ] 200 VUs  29.0s/45s
+
+running (0m29.8s), 200/200 VUs, 103814 complete and 0 interrupted iterations
+default   [  67% ] 200 VUs  30.0s/45s
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/YdWtx5\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/y6cNi8\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/UiL2bL\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/yDygdD\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TXcP0c\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/K7RchD\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/CN6WgM\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/KNI6qr\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/c9qkIL\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/OisqmX\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/xfb2f8\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TqnDhZ\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/jv307P\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/9Ftp9A\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TJWJ7a\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/iC6eu9\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/d0TSI5\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/u0sCR8\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/7cpWH2\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/vE0kzR\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/3A82D1\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/qlxqtg\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/kVvQa7\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/PyR0X2\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/5VZF9Q\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/xhmYvG\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/hDhEqR\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/x6AEAE\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/j43TBg\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/9saJJw\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/kV8pB5\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/NYaUEP\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/iQsaH5\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/ic9Yse\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/0EGMA6\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/b8ey2r\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/4LROZI\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/SA3qL7\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/aokEXD\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/ZWMQQj\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/fSs9bI\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/wtLqhE\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bUlalZ\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2QP4To\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/fIH8zU\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/GFHAsT\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/vE0kzR\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/hSomcf\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2QP4To\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/4VmpKR\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/ZOnGXx\": dial: i/o timeout"
+time="2026-08-03T18:19:07+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/uIdMN0\": dial: i/o timeout"
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/D2V5My\": dial: i/o timeout"
+
+running (0m30.8s), 200/200 VUs, 116493 complete and 0 interrupted iterations
+default   [  69% ] 200 VUs  31.0s/45s
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/9O1MaH\": dial: i/o timeout"
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/DnRySo\": dial: i/o timeout"
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/amlyC1\": dial: i/o timeout"
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/HpZuBJ\": dial: i/o timeout"
+time="2026-08-03T18:19:08+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/jgxEEm\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/7FDaUb\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/yDygdD\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/IXTFOt\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/snSry6\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TqnDhZ\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/nuAqZ4\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/xZAQWa\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/wrbXNr\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2QP4To\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/viPXoE\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/NszZxE\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/DUN4t2\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2nGk7U\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/YawaTE\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/Y5NgcE\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/PzQ5ck\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/RIgxeg\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/euDV0Q\": dial: i/o timeout"
+
+running (0m31.8s), 200/200 VUs, 128232 complete and 0 interrupted iterations
+default   [  71% ] 200 VUs  32.0s/45s
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/aBGvnd\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/yDygdD\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/YdWtx5\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/JCHz1f\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2QP4To\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/1NSKRt\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/kVP8tV\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:09+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TamZW5\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/sXzS2A\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/Vux3r8\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/CN6WgM\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/QGpYuZ\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/YdWtx5\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/Gdlx1b\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/xhmYvG\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bplKmM\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/VRreg5\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/ECHol5\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/IXTFOt\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bI2Enc\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/xLCLFV\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/tj2HaX\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/PbMbDN\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/7FDaUb\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/k3g41U\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/7yDE0k\": dial: i/o timeout"
+
+running (0m32.8s), 200/200 VUs, 140660 complete and 0 interrupted iterations
+default   [  73% ] 200 VUs  33.0s/45s
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/TlfCcl\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/fIEXmL\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/Hro0j7\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/bplKmM\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/tXR7CX\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/4lnjYA\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/IXTFOt\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/EMtPcQ\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/N7VhAP\": dial: i/o timeout"
+time="2026-08-03T18:19:10+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/K7RchD\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/QbUvG6\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/10qIIg\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/Tlu606\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/2QP4To\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/d2NDRd\": dial: i/o timeout"
+time="2026-08-03T18:19:11+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/clS1Xh\": dial: i/o timeout"
+
+running (0m33.8s), 200/200 VUs, 151531 complete and 0 interrupted iterations
+default   [  76% ] 200 VUs  34.0s/45s
+time="2026-08-03T18:19:12+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/9RK6F7\": dial: i/o timeout"
+
+running (0m34.8s), 200/200 VUs, 161369 complete and 0 interrupted iterations
+default   [  78% ] 200 VUs  35.0s/45s
+
+running (0m35.8s), 200/200 VUs, 170438 complete and 0 interrupted iterations
+default   [  80% ] 200 VUs  36.0s/45s
+time="2026-08-03T18:19:14+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/yHT613\": dial: i/o timeout"
+
+running (0m36.8s), 200/200 VUs, 179446 complete and 0 interrupted iterations
+default   [  82% ] 200 VUs  37.0s/45s
+time="2026-08-03T18:19:14+08:00" level=warning msg="Request Failed" error="Get \"http://127.0.0.1:8080/KNI6qr\": dial: i/o timeout"
+
+running (0m37.8s), 200/200 VUs, 188407 complete and 0 interrupted iterations
+default   [  84% ] 200 VUs  38.0s/45s
+
+running (0m39.0s), 200/200 VUs, 197160 complete and 0 interrupted iterations
+default   [  87% ] 200 VUs  39.0s/45s
+
+running (0m40.0s), 200/200 VUs, 206957 complete and 0 interrupted iterations
+default   [  89% ] 200 VUs  40.0s/45s
+
+running (0m41.0s), 200/200 VUs, 216814 complete and 0 interrupted iterations
+default   [  91% ] 200 VUs  41.0s/45s
+
+running (0m42.0s), 200/200 VUs, 226578 complete and 0 interrupted iterations
+default   [  93% ] 200 VUs  42.0s/45s
+
+running (0m43.0s), 200/200 VUs, 234284 complete and 0 interrupted iterations
+default   [  96% ] 200 VUs  43.0s/45s
+
+running (0m44.0s), 200/200 VUs, 243470 complete and 0 interrupted iterations
+default   [  98% ] 200 VUs  44.0s/45s
+
+running (0m45.0s), 200/200 VUs, 252607 complete and 0 interrupted iterations
+default   [ 100% ] 200 VUs  45.0s/45s
+
+--- 状态码分布 ---
+  302 : 239961 (94.85%)
+  410 : 12914 (5.10%)
+  other : 128 (0.05%)
+
+--- 关键指标（抄进 results/baseline.md）---
+  QPS        : 5612
+  P50        : 0.92 ms
+  P99        : 163.13 ms
+  P99.9      : 300.83 ms
+  总请求数    : 253003
+
+  !! 302 占比低于 95%，这次压测数据不可用。检查：
+     1. seed 数据是否灌进去了
+     2. 是否重建了布隆过滤器 curl -X POST /admin/bloom/rebuild
+     3. 限流是否把请求挡了（看 429 数量）
+
+running (0m45.1s), 000/200 VUs, 253003 complete and 0 interrupted iterations
+default ✓ [ 100% ] 200 VUs  45s
