@@ -26,8 +26,8 @@ import org.springframework.context.annotation.Configuration;
  *       人工/定时补偿——统计场景通常直接对账重算即可。</li>
  * </ul>
  *
- * <p>队列声明成 durable：broker 重启后拓扑还在。消息本身没开持久化投递——
- * 统计数据丢一点可接受，换发送吞吐（这个取舍要能主动讲出来）。
+ * <p>队列 durable，生产者显式 PERSISTENT + mandatory + correlated confirm。
+ * 未确认消息保留在本地持久目录；broker 数据目录也必须挂载持久卷。
  */
 @Configuration
 public class RabbitConfig {

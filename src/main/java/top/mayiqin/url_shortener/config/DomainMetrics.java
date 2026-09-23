@@ -54,6 +54,9 @@ public class DomainMetrics {
         Gauge.builder("shortlink.stats.dropped", statsCollector, StatsCollector::droppedCount)
                 .description("因队列满被丢弃的统计事件数")
                 .register(registry);
+        Gauge.builder("shortlink.stats.publish_failures", statsCollector, StatsCollector::publishFailureCount)
+                .description("统计投递失败次数，事件保留在磁盘等待重试")
+                .register(registry);
 
         Gauge.builder("shortlink.idgen.remain_ratio", idGenerator, SegmentIdGenerator::currentRemainRatio)
                 .description("当前号段剩余比例")

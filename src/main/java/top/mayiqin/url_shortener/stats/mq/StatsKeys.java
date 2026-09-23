@@ -13,6 +13,7 @@ public final class StatsKeys {
 
     /** 有新计数待落库的 (日期,小时,短码) 集合。落库任务 SPOP 它而不是扫全库。 */
     public static final String DIRTY = "sl:st:dirty";
+    public static final String PENDING_BATCH = "sl:st:pending-batch";
 
     private StatsKeys() {
     }

@@ -10,21 +10,23 @@
 
 ```
  创建链路（QPS 低，刻意做"重"）
- POST /api/link ─► 限流(gid) ─► 风控(开放重定向/SSRF) ─► 幂等(url_hash)
+ POST /api/link ─► Bearer认证/归属校验 ─► 限流(gid) ─► 风控 ─► 持久规范短码预约
       ─► 随机短码 + BF判重（先写 BF 后落库，ADR-004）─► 落库(唯一索引兜底)
       ─► 预热缓存 ─► 返回（返回即可 302，绝无 404 窗口）
 
  跳转链路（QPS 极高，必须"瘦"）
  GET /{6位短码} ─► 限流(IP+码) ─► Caffeine L1 ─► Redis L2 ─► BloomFilter
       ─► 空值缓存 ─► 分布式锁+双重检查 ─► MySQL ─► 回写缓存 ─► 302
-      └─► 统计事件异步投 RabbitMQ（失败降级本地暂存，绝不影响跳转，ADR-009）
+      └─► 统计事件本地 fsync ─► 后台 RabbitMQ 确认投递（未确认保留磁盘副本）
 
  统计链路（最终一致）
- MQ ─► 消费端（msgId 幂等 + Redis INCR/PV + HLL/UV/UIP + dirty 集合）
-    ─► 30s 定时任务（Redisson 锁）─► GETDEL 增量 ─► MySQL 批量 upsert
+ MQ ─► Lua 原子消费（msgId 幂等 + Redis PV/UV/UIP + dirty 集合）
+    ─► 30s 定时任务 ─► 持久待处理批次 ─► MySQL 回执与统计同事务 ─► 幂等点击数
 ```
 
 ## 快速启动
+
+**安全升级后的启动前置条件**：先按 [安全与可靠性升级](docs/security-reliability-upgrade.md) 迁移新增索引/统计回执表，并设置 `SHORTLINK_ADMIN_TOKEN`、`SHORTLINK_API_TOKEN`（独立随机值，均至少 32 字符）。`/api/**` 现在要求 Bearer Token，`/admin/**` 只接受 `X-Admin-Token`；缺失配置会拒绝启动。
 
 ### 方式 A：Docker（推荐，可复现压测环境）
 
@@ -42,7 +44,7 @@ mvn spring-boot:run
 mvn spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-RabbitMQ 缺席时应用照常启动，统计链路自动降级本地暂存（`/admin/stats` 里 `stats.pending` 会增长）。
+RabbitMQ 缺席时统计事件保留在本地持久目录，恢复后确认补投（`/admin/stats` 里 `stats.pending` 会增长）。目录必须放在持久卷，详情见升级文档。
 
 ## 接口速览
 

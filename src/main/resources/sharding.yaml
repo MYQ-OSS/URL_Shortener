@@ -45,6 +45,16 @@ dataSources:
 rules:
   - !SHARDING
     tables:
+      t_link_dedup:
+        actualDataNodes: ds_$->{0..1}.t_link_dedup_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: dedup_key
+            shardingAlgorithmName: dedup_db
+        tableStrategy:
+          standard:
+            shardingColumn: dedup_key
+            shardingAlgorithmName: dedup_tbl
       t_link:
         actualDataNodes: ds_$->{0..1}.t_link_$->{0..7}
         databaseStrategy:
@@ -77,6 +87,14 @@ rules:
             shardingAlgorithmName: msg_tbl
 
     shardingAlgorithms:
+      dedup_db:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{((dedup_key.hashCode() % 16 + 16) % 16).intdiv(8)}
+      dedup_tbl:
+        type: INLINE
+        props:
+          algorithm-expression: t_link_dedup_$->{(dedup_key.hashCode() % 16 + 16) % 16 % 8}
       uri_db:
         type: INLINE
         props:

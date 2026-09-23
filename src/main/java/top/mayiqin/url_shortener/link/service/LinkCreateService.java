@@ -58,6 +58,7 @@ public class LinkCreateService {
     private final UrlRiskChecker riskChecker;
     private final TransactionTemplate tx;
     private final LocalMessageMapper messageMapper;
+    private final LinkDedupService dedupService;
     private final ObjectMapper json = JsonMapper.builder().build();
     private final String defaultDomain;
 
@@ -68,6 +69,7 @@ public class LinkCreateService {
                              UrlRiskChecker riskChecker,
                              TransactionTemplate tx,
                              LocalMessageMapper messageMapper,
+                             LinkDedupService dedupService,
                              @org.springframework.beans.factory.annotation.Value("${shortlink.domain}") String defaultDomain) {
         this.idGenerator = idGenerator;
         this.codeGenerator = codeGenerator;
@@ -76,6 +78,7 @@ public class LinkCreateService {
         this.riskChecker = riskChecker;
         this.tx = tx;
         this.messageMapper = messageMapper;
+        this.dedupService = dedupService;
         this.defaultDomain = defaultDomain;
     }
 
@@ -105,64 +108,69 @@ public class LinkCreateService {
 
         byte[] hash = md5(originUrl);
 
-        // ── 2. 幂等 ───────────────────────────────────────────────
-        if (!forceNew) {
-            Link exist = linkMapper.selectOne(Wrappers.<Link>lambdaQuery()
-                    .eq(Link::getGid, gid)
-                    .eq(Link::getUrlHash, hash)
-                    .eq(Link::getDelFlag, 0)
-                    .last("LIMIT 1"));
-            if (exist != null) {
-                return fullUrl(exist.getDomain(), exist.getShortUri());
+        String dedupKey = forceNew ? null : LinkDedupService.key(gid, originUrl);
+        for (int attempt = 0; attempt < 5; attempt++) {
+            // 所有查询都携带分片键；并发请求共享已持久化的规范短码。
+            String shortUri = forceNew ? codeGenerator.generate() : dedupService.reserve(dedupKey);
+            if (!forceNew) {
+                Link existing = findByCode(shortUri);
+                if (existing != null) {
+                    if (sameTarget(existing, gid, originUrl)) return fullUrl(existing.getDomain(), shortUri);
+                    dedupService.replace(dedupKey, shortUri);
+                    continue;
+                }
+                // 预约可能经历过进程重启或 BF 重建，落库前重新登记。
+                codeGenerator.remember(shortUri);
             }
-            // ⚠️ 分库分表下的坑：t_link 按 short_uri 分片，而这里按 urlHash 查，
-            // 是一次广播查询。生产上应该单独建一张按 urlHash 分片的去重表，
-            // 或者用 Redis SETNX(urlHash -> shortUri) 做幂等。见 ADR-007。
-        }
-
-        // ── 3. 生成短码（内部已完成 BF 判重 + BF.add）────────────────
-        String shortUri = codeGenerator.generate();
-
-        Link link = new Link();
-        link.setId(idGenerator.nextId());        // 趋势递增主键，避免 InnoDB 页分裂（独立短事务）
-        link.setShortUri(shortUri);
-        link.setDomain(defaultDomain);
-        link.setOriginUrl(originUrl);
-        link.setUrlHash(hash);
-        link.setGid(gid);
-        link.setEnableStatus(0);
-        link.setValidType(validType == null ? 0 : validType);
-        link.setValidEnd(validEnd);
-        link.setClickNum(0);
-        link.setDescribe(describe);
-        link.setDelFlag(0);
-
-        // ── 4. 落库 + 本地消息表（同一个事务，ADR-005）──────────────────
-        // 事务只包这两步写。t_link 和 t_local_message 按同一个 short_uri 分片表达式
-        // 路由（sharding.yaml 的 uri_* 与 msg_*），两条 INSERT 必然落同一个库——
-        // 所以一个本地事务就能同时写两张表，不需要分布式事务框架。
-        // 消息由 LinkGotoSyncJob 定时补偿投递到 t_link_goto（按 gid 分片的异构索引）。
-        try {
-            tx.executeWithoutResult(status -> {
-                linkMapper.insert(link);
-                messageMapper.insert(gotoSyncMessage(link));
-            });
-        } catch (DuplicateKeyException e) {
-            // 极小概率（BF 判重之后仍然撞车）。换短码重试一次即可。
-            log.warn("短码 {} 落库冲突，重试一次", shortUri);
-            shortUri = codeGenerator.generate();
+            Link link = new Link();
+            link.setId(idGenerator.nextId());        // 趋势递增主键，避免 InnoDB 页分裂（独立短事务）
             link.setShortUri(shortUri);
-            link.setId(idGenerator.nextId());
-            tx.executeWithoutResult(status -> {
-                linkMapper.insert(link);
-                messageMapper.insert(gotoSyncMessage(link));
-            });
+            link.setDomain(defaultDomain);
+            link.setOriginUrl(originUrl);
+            link.setUrlHash(hash);
+            link.setGid(gid);
+            link.setEnableStatus(0);
+            link.setValidType(validType == null ? 0 : validType);
+            link.setValidEnd(validEnd);
+            link.setClickNum(0);
+            link.setDescribe(describe);
+            link.setDelFlag(0);
+
+            // ── 4. 落库 + 本地消息表（同一个事务，ADR-005）──────────────────
+            // 事务只包这两步写。t_link 和 t_local_message 按同一个 short_uri 分片表达式
+            // 路由（sharding.yaml 的 uri_* 与 msg_*），两条 INSERT 必然落同一个库——
+            // 所以一个本地事务就能同时写两张表，不需要分布式事务框架。
+            // 消息由 LinkGotoSyncJob 定时补偿投递到 t_link_goto（按 gid 分片的异构索引）。
+            try {
+                tx.executeWithoutResult(status -> {
+                    linkMapper.insert(link);
+                    messageMapper.insert(gotoSyncMessage(link));
+                });
+            } catch (DuplicateKeyException e) {
+                if (!forceNew) {
+                    Link winner = findByCode(shortUri);
+                    if (winner != null && sameTarget(winner, gid, originUrl)) {
+                        return fullUrl(winner.getDomain(), shortUri);
+                    }
+                    dedupService.replace(dedupKey, shortUri);
+                }
+                continue;
+            }
+
+            // ── 5. 预热缓存：删空值缓存 + 写长链缓存 → 返回即可访问，不会 404 ──
+            queryService.warmUp(shortUri, originUrl);
+
+            return fullUrl(defaultDomain, shortUri);
         }
+        throw new IllegalStateException("短码冲突重试次数已用尽");
+    }
 
-        // ── 5. 预热缓存：删空值缓存 + 写长链缓存 → 返回即可访问，不会 404 ──
-        queryService.warmUp(shortUri, originUrl);
+    private Link findByCode(String code) {
+        return linkMapper.selectOne(Wrappers.<Link>lambdaQuery().eq(Link::getShortUri, code));
+    }
 
-        return fullUrl(defaultDomain, shortUri);
+    private static boolean sameTarget(Link link, String gid, String url) {
+        return gid.equals(link.getGid()) && url.equals(link.getOriginUrl());
     }
 
     /**

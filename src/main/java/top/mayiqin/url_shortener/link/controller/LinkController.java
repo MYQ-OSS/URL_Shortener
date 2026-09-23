@@ -1,6 +1,5 @@
 package top.mayiqin.url_shortener.link.controller;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -12,11 +11,14 @@ import top.mayiqin.url_shortener.link.entity.Link;
 import top.mayiqin.url_shortener.link.service.LinkCreateService;
 import top.mayiqin.url_shortener.link.service.LinkManageService;
 import top.mayiqin.url_shortener.ratelimit.RateLimiter;
+import top.mayiqin.url_shortener.auth.ApiInterceptor;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 /** 管理接口。QPS 低，可以"重"。 */
+@Data
 @RestController
 @RequestMapping("/api/link")
 public class LinkController {
@@ -25,38 +27,35 @@ public class LinkController {
     private final LinkManageService manageService;
     private final RateLimiter rateLimiter;
 
-    public LinkController(LinkCreateService createService,
-                          LinkManageService manageService,
-                          RateLimiter rateLimiter) {
-        this.createService = createService;
-        this.manageService = manageService;
-        this.rateLimiter = rateLimiter;
-    }
-
+    /** 创建短链。 */
     @PostMapping
-    public ResponseEntity<?> create(@Valid @RequestBody CreateRequest req, HttpServletRequest http) {
+    public ResponseEntity<?> create(@Valid @RequestBody CreateRequest req,
+                                    @RequestAttribute(ApiInterceptor.GID_ATTRIBUTE) String gid) {
+        requireOwner(req.getGid(), gid);
         // 创建接口的限流要"严格"：按用户维度，防刷量
-        if (!rateLimiter.tryAcquireCreate(req.getGid())) {
+        if (!rateLimiter.tryAcquireCreate(gid)) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .body("创建过于频繁，请稍后再试");
         }
         String shortUrl = createService.create(
-                req.getOriginUrl(), req.getGid(), req.isForceNew(),
+                req.getOriginUrl(), gid, req.isForceNew(),
                 req.getValidType(), req.getValidEnd(), req.getDescribe());
         return ResponseEntity.ok(shortUrl);
     }
 
     /** 禁用短链。要求秒级生效：先改 DB，再清多级缓存 + 广播（顺序理由见 LinkManageService）。 */
     @PostMapping("/{shortUri}/disable")
-    public ResponseEntity<Void> disable(@PathVariable String shortUri) {
-        boolean ok = manageService.updateStatus(shortUri, LinkManageService.STATUS_DISABLED_BY_USER);
+    public ResponseEntity<Void> disable(@PathVariable String shortUri,
+                                        @RequestAttribute(ApiInterceptor.GID_ATTRIBUTE) String gid) {
+        boolean ok = manageService.updateStatus(shortUri, gid, LinkManageService.STATUS_DISABLED_BY_USER);
         return ok ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 
     /** 恢复被禁用的短链。 */
     @PostMapping("/{shortUri}/enable")
-    public ResponseEntity<Void> enable(@PathVariable String shortUri) {
-        boolean ok = manageService.updateStatus(shortUri, LinkManageService.STATUS_ENABLED);
+    public ResponseEntity<Void> enable(@PathVariable String shortUri,
+                                       @RequestAttribute(ApiInterceptor.GID_ATTRIBUTE) String gid) {
+        boolean ok = manageService.updateStatus(shortUri, gid, LinkManageService.STATUS_ENABLED);
         return ok ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 
@@ -66,8 +65,16 @@ public class LinkController {
      */
     @GetMapping("/list")
     public ResponseEntity<List<Link>> list(@RequestParam @NotBlank String gid,
-                                           @RequestParam(defaultValue = "20") int limit) {
-        return ResponseEntity.ok(manageService.listByGid(gid, limit));
+                                           @RequestParam(defaultValue = "20") int limit,
+                                           @RequestAttribute(ApiInterceptor.GID_ATTRIBUTE) String authenticatedGid) {
+        requireOwner(gid, authenticatedGid);
+        return ResponseEntity.ok(manageService.listByGid(authenticatedGid, limit));
+    }
+
+    private static void requireOwner(String requestedGid, String authenticatedGid) {
+        if (!authenticatedGid.equals(requestedGid)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "不能操作其他 gid 的短链");
+        }
     }
 
     @Data

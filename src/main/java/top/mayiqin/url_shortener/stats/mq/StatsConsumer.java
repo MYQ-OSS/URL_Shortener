@@ -2,11 +2,12 @@ package top.mayiqin.url_shortener.stats.mq;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.data.redis.core.RedisOperations;
-import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.scripting.support.ResourceScriptSource;
+import java.util.List;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import top.mayiqin.url_shortener.config.RabbitConfig;
@@ -34,12 +35,9 @@ import java.time.format.DateTimeFormatter;
  *
  * <h3>消费幂等</h3>
  * MQ 是至少一次投递，连接抖动时消息可能重复，重复消费的表现是 PV 虚高。
- * 用 {@code SETNX msgId} 去重（TTL 10 分钟——重复投递只发生在秒级窗口内，不需要长）。
- * 注意 yaml 里的 listener retry 是<b>进程内</b>重试，不产生重复投递，不受此影响。
+ * Lua 原子写入去重标记和统计计数，去重窗口为 7 天，覆盖持久待投递文件重放。
  *
- * <h3>为什么用 pipeline</h3>
- * 每个事件要写 6 条 Redis 命令。逐条发是 6 次 RT ≈ 3ms，消费吞吐被网络往返卡死；
- * pipeline 一次 RT 全发完，消费吞吐提升约 6 倍。
+ * Lua 同时避免多次网络往返和去重标记、计数之间的失败窗口。
  */
 @Slf4j
 @Component
@@ -51,13 +49,16 @@ public class StatsConsumer {
     /** 计数 key 的 TTL：2 天。落库周期是 30 秒，2 天足够兜住任何积压。 */
     private static final long KEY_TTL_SECONDS = Duration.ofDays(2).toSeconds();
 
-    private static final Duration DEDUP_TTL = Duration.ofMinutes(10);
+    private static final Duration DEDUP_TTL = Duration.ofDays(7);
+    private final DefaultRedisScript<Long> collectScript = new DefaultRedisScript<>();
 
     private final StringRedisTemplate redis;
     private final ObjectMapper json = JsonMapper.builder().build();
 
     public StatsConsumer(StringRedisTemplate redis) {
         this.redis = redis;
+        collectScript.setScriptSource(new ResourceScriptSource(new ClassPathResource("lua/collect_stats.lua")));
+        collectScript.setResultType(Long.class);
     }
 
     @RabbitListener(queues = RabbitConfig.QUEUE_STATS)
@@ -65,14 +66,6 @@ public class StatsConsumer {
         // 解析失败直接抛：progression 是 重试 3 次 → 死信队列。
         // 不能吞掉——解析失败说明生产端出了 bug，静默丢弃会掩盖它。
         StatsEvent event = json.readValue(payload, StatsEvent.class);
-
-        // 幂等去重：setIfAbsent 返回 false 说明这个 msgId 已经处理过
-        Boolean first = redis.opsForValue()
-                .setIfAbsent(StatsKeys.dedup(event.msgId()), "1", DEDUP_TTL);
-        if (!Boolean.TRUE.equals(first)) {
-            log.debug("重复消息已跳过: {}", event.msgId());
-            return;
-        }
 
         ZonedDateTime time = Instant.ofEpochMilli(event.timestamp()).atZone(ZONE);
         String date = DATE_FMT.format(time.toLocalDate());
@@ -84,21 +77,12 @@ public class StatsConsumer {
         String uipKey = StatsKeys.uip(date, uri);
         String visitor = visitorId(event);
 
-        redis.executePipelined(new SessionCallback<Object>() {
-            @Override
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            public Object execute(@NonNull RedisOperations operations) {
-                RedisOperations<String, String> ops = operations;
-                ops.opsForValue().increment(pvKey);
-                ops.expire(pvKey, Duration.ofSeconds(KEY_TTL_SECONDS));
-                ops.opsForHyperLogLog().add(uvKey, visitor);
-                ops.expire(uvKey, Duration.ofSeconds(KEY_TTL_SECONDS));
-                ops.opsForHyperLogLog().add(uipKey, event.ip());
-                ops.expire(uipKey, Duration.ofSeconds(KEY_TTL_SECONDS));
-                ops.opsForSet().add(StatsKeys.DIRTY, StatsKeys.dirtyMember(date, hour, uri));
-                return null;
-            }
-        });
+        // 去重标记和计数原子执行，避免 SETNX 成功、pipeline 失败后重试被误跳过。
+        Long result = redis.execute(collectScript,
+                List.of(StatsKeys.dedup(event.msgId()), pvKey, uvKey, uipKey, StatsKeys.DIRTY),
+                String.valueOf(KEY_TTL_SECONDS), String.valueOf(DEDUP_TTL.toSeconds()),
+                visitor, event.ip(), StatsKeys.dirtyMember(date, hour, uri));
+        if (result == null) throw new IllegalStateException("统计脚本未返回结果");
     }
 
     /**

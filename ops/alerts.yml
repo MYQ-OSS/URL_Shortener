@@ -1,0 +1,29 @@
+groups:
+  - name: shortlink-statistics
+    rules:
+      - alert: ShortlinkStatsDropped
+        expr: shortlink_stats_dropped > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "统计事件未能写入持久目录，请检查磁盘和暂存容量"
+      - alert: ShortlinkStatsBacklog
+        expr: shortlink_stats_pending > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "统计待投递事件持续积压"
+      - alert: ShortlinkStatsDeadLetters
+        expr: shortlink_stats_dead_letters > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "统计死信队列非空，需要处理和重放"
+      - alert: ShortlinkStatsBrokerUnavailable
+        expr: shortlink_stats_broker_reachable == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "无法查询统计队列，请检查 RabbitMQ"

@@ -8,6 +8,8 @@ import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import top.mayiqin.url_shortener.common.Base62Codec;
+import top.mayiqin.url_shortener.common.RedisAvailability;
+import org.springframework.web.server.ResponseStatusException;
 import top.mayiqin.url_shortener.link.entity.Link;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
@@ -79,6 +81,8 @@ public class LinkQueryService {
     private final RedissonClient redisson;
     private final ShortCodeGenerator codeGenerator;
     private final LinkMapper linkMapper;
+    private final DbReadGuard dbGuard;
+    private final RedisAvailability redisAvailability;
 
     /**
      * 压测分阶段开关（见 benchmark/README.md 2.5 的逐阶段表）：
@@ -97,6 +101,8 @@ public class LinkQueryService {
                             RedissonClient redisson,
                             ShortCodeGenerator codeGenerator,
                             LinkMapper linkMapper,
+                            DbReadGuard dbGuard,
+                            RedisAvailability redisAvailability,
                             @org.springframework.beans.factory.annotation.Value("${shortlink.cache.l1-enabled:true}") boolean l1Enabled,
                             @org.springframework.beans.factory.annotation.Value("${shortlink.cache.l2-enabled:true}") boolean l2Enabled) {
         this.localCache = localCache;
@@ -104,6 +110,8 @@ public class LinkQueryService {
         this.redisson = redisson;
         this.codeGenerator = codeGenerator;
         this.linkMapper = linkMapper;
+        this.dbGuard = dbGuard;
+        this.redisAvailability = redisAvailability;
         this.l1Enabled = l1Enabled;
         this.l2Enabled = l2Enabled;
         if (!l1Enabled || !l2Enabled) {
@@ -130,25 +138,22 @@ public class LinkQueryService {
             }
         }
 
-        if (!l2Enabled) {
+        if (!l2Enabled || redisAvailability.isOpen()) {
             // 压测阶段开关：绕过全部 Redis 链路（L2 / BF / 空值缓存 / 锁），直查 DB
-            return loadFromDb(shortUri);
+            return fallback(shortUri);
         }
 
         try {
             return resolveViaRedis(shortUri);
+        } catch (ResponseStatusException e) {
+            throw e;
         } catch (RuntimeException e) {
             // ── Redis 故障降级（ADR-015 故障降级矩阵）──────────────────
             // L2/BF/锁全在 Redis 上，任何一个调用抛异常都说明 Redis 不可用。
-            // 此时跳过整条 Redis 链直查 DB：QPS 下降（L1 兜住热点，其余落 DB），
-            // 但错误率保持 0——这正是"Redis 挂了跳转还能用"的演练预期。
-            // 防穿透暂时失效（BF 不可用），DB 靠索引硬扛，这是有意识的取舍。
+            // 跳过 Redis 链后受本地回源预算保护；超额返回 503，避免故障扩散到 DB。
+            redisAvailability.failed();
             redisDownWarn(e);
-            String url = loadFromDb(shortUri);
-            if (url != null) {
-                putLocal(shortUri, url);   // L1 还能暖一点是一点
-            }
-            return url;
+            return fallback(shortUri);
         }
     }
 
@@ -227,10 +232,16 @@ public class LinkQueryService {
     }
 
     private String loadFromDb(String shortUri) {
-        Link link = linkMapper.selectOne(Wrappers.<Link>lambdaQuery()
+        Link link = dbGuard.execute(() -> linkMapper.selectOne(Wrappers.<Link>lambdaQuery()
                 .eq(Link::getShortUri, shortUri)
-                .eq(Link::getDelFlag, 0));
+                .eq(Link::getDelFlag, 0)));
         return (link != null && link.redirectable()) ? link.getOriginUrl() : null;
+    }
+
+    private String fallback(String shortUri) {
+        String url = loadFromDb(shortUri);
+        putLocal(shortUri, url == null ? "" : url);
+        return url;
     }
 
     /**
@@ -266,12 +277,14 @@ public class LinkQueryService {
 
     /** 创建成功后预热：这是消掉"空值缓存导致新短链 404"窗口的关键。 */
     public void warmUp(String shortUri, String originUrl) {
+        if (l1Enabled) localCache.invalidate(shortUri);
         if (!l2Enabled) {
             return;   // 压测阶段关闭 L2 时没有可预热的东西
         }
         try {
             redis.delete(KEY_NULL + shortUri);
             redis.opsForValue().set(KEY_LINK + shortUri, originUrl, TTL_LINK);
+            redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
         } catch (RuntimeException e) {
             // Redis 故障时预热失败：首次访问会 miss → 直查 DB（降级路径）兜住
             redisDownWarn(e);

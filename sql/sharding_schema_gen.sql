@@ -2,6 +2,91 @@ SET NAMES utf8mb4;
 CREATE DATABASE IF NOT EXISTS shortlink_0 DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS shortlink_1 DEFAULT CHARACTER SET utf8mb4;
 
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_0 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_1 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_2 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_3 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_4 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_5 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_6 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_link_dedup_7 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_0 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_1 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_2 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_3 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_4 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_5 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_6 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_1.t_link_dedup_7 (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS shortlink_0.t_stats_flush_batch (
+  batch_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS shortlink_0.t_link_0 LIKE shortlink.t_link;
 CREATE TABLE IF NOT EXISTS shortlink_0.t_link_1 LIKE shortlink.t_link;
 CREATE TABLE IF NOT EXISTS shortlink_0.t_link_2 LIKE shortlink.t_link;

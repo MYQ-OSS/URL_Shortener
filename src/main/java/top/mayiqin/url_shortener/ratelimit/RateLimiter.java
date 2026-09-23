@@ -6,6 +6,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Component;
+import top.mayiqin.url_shortener.common.RedisAvailability;
 
 import java.util.List;
 
@@ -33,6 +34,9 @@ public class RateLimiter {
 
     private final StringRedisTemplate redis;
     private final DefaultRedisScript<Long> tokenBucketScript;
+    private final RedisAvailability redisAvailability;
+    private final LocalTokenBucket fallbackCreate;
+    private final LocalTokenBucket fallbackRedirect;
 
     /**
      * 限流总开关。压测时关闭（{@code shortlink.rate-limit.enabled=false}），
@@ -47,12 +51,18 @@ public class RateLimiter {
     private final int redirectRefillPerSec;
 
     public RateLimiter(StringRedisTemplate redis,
+                       RedisAvailability redisAvailability,
+                       @Value("${shortlink.fallback.create-qps:10}") int fallbackCreateQps,
+                       @Value("${shortlink.fallback.redirect-qps:1000}") int fallbackRedirectQps,
                        @Value("${shortlink.rate-limit.enabled:true}") boolean enabled,
                        @Value("${shortlink.rate-limit.create.capacity:20}") int createCapacity,
                        @Value("${shortlink.rate-limit.create.refill-per-sec:10}") int createRefill,
                        @Value("${shortlink.rate-limit.redirect.capacity:200}") int redirectCapacity,
                        @Value("${shortlink.rate-limit.redirect.refill-per-sec:100}") int redirectRefill) {
         this.redis = redis;
+        this.redisAvailability = redisAvailability;
+        this.fallbackCreate = new LocalTokenBucket(fallbackCreateQps, fallbackCreateQps);
+        this.fallbackRedirect = new LocalTokenBucket(fallbackRedirectQps, fallbackRedirectQps);
         this.enabled = enabled;
         this.createCapacity = createCapacity;
         this.createRefillPerSec = createRefill;
@@ -80,6 +90,7 @@ public class RateLimiter {
     }
 
     private boolean acquire(String key, int capacity, int refillPerSec) {
+        if (redisAvailability.isOpen()) return fallback(key);
         try {
             Long allowed = redis.execute(tokenBucketScript, List.of(key),
                     String.valueOf(capacity),
@@ -88,11 +99,13 @@ public class RateLimiter {
                     "1");
             return allowed != null && allowed == 1L;
         } catch (RuntimeException e) {
-            // ⚠️ Redis 挂了时限流器要"失败放行"还是"失败拒绝"？
-            // 这里选放行：限流是保护措施，不该在依赖故障时变成新的故障源。
-            // 但要配合下游的熔断/信号量隔离，否则 Redis 挂 + 限流放行 = DB 被打死。
-            // 这个取舍要在面试里主动说出来。
-            return true;
+            redisAvailability.failed();
+            return fallback(key);
         }
+    }
+
+    /** 兜底按实例总量限流，随机 IP/短码无法通过换 key 绕过。 */
+    private boolean fallback(String key) {
+        return (key.startsWith("rl:create:") ? fallbackCreate : fallbackRedirect).tryAcquire();
     }
 }

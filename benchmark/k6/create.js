@@ -25,6 +25,9 @@ export const options = {
 };
 
 const BASE = __ENV.BASE_URL || 'http://127.0.0.1:8080';
+const TOKEN = __ENV.SHORTLINK_API_TOKEN;
+const GID = __ENV.SHORTLINK_API_GID || 'default';
+if (!TOKEN) throw new Error('请设置 SHORTLINK_API_TOKEN，并使用其绑定的 SHORTLINK_API_GID');
 
 // 每个 VU 用自己的计数器 + vu.idInTest 前缀，保证 URL 全局唯一（和 lua 版 counter+os.time 等价）
 let counter = 0;
@@ -33,14 +36,13 @@ export default function () {
     counter++;
     // forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（发号 + 生成短码 + 落库）。
     // 不加这个的话第二次起就命中幂等直接返回，测的是查询而不是创建。
-    const gidNum = (counter + vu.idInTest * 100000) % 100;
     const body = JSON.stringify({
         originUrl: `https://example.com/bench/${vu.idInTest}-${counter}-${Date.now()}`,
-        gid: 'bench' + String(gidNum).padStart(3, '0'),
+        gid: GID,
         forceNew: true,
     });
     const res = http.post(BASE + '/api/link', body, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
         tags: { name: 'create' },
     });
 

@@ -6,20 +6,24 @@
 -- 而是短链的读写比是 1:500 —— 用跳转的并发量去压创建，测的是一个不存在的场景。
 -- 真实的创建 QPS 大概在几百到几千，把它压到几万没有参考价值。
 --
--- 另外创建接口默认限流是 10 QPS/gid（严格），压测时要么调大，
--- 要么像下面这样把请求散到多个 gid 上。
+-- 设置 SHORTLINK_API_TOKEN 和其绑定的 SHORTLINK_API_GID（默认 default）。
+-- 创建接口默认限流 10 QPS/gid，压测时通过服务端配置调整。
 
 local counter = 0
+local token = assert(os.getenv("SHORTLINK_API_TOKEN"), "缺少 SHORTLINK_API_TOKEN")
+local gid = os.getenv("SHORTLINK_API_GID") or "default"
+assert(gid:match("^[%w_-]+$"), "wrk 示例仅支持字母、数字、下划线或连字符 gid")
 wrk.method = "POST"
 wrk.headers["Content-Type"] = "application/json"
+wrk.headers["Authorization"] = "Bearer " .. token
 
 function request()
    counter = counter + 1
    -- forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（发号 + 生成短码 + 落库）。
    -- 不加这个的话第二次起就命中幂等直接返回，测的是查询而不是创建。
    local body = string.format(
-      '{"originUrl":"https://example.com/bench/%d-%d","gid":"bench%03d","forceNew":true}',
-      counter, os.time(), counter % 100)
+      '{"originUrl":"https://example.com/bench/%d-%d","gid":"%s","forceNew":true}',
+      counter, os.time(), gid)
    return wrk.format(nil, "/api/link", nil, body)
 end
 

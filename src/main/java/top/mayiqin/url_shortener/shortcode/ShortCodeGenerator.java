@@ -87,6 +87,11 @@ public class ShortCodeGenerator {
                 "连续 " + MAX_ATTEMPTS + " 次生成短码均冲突，短码空间可能告急或 BF 假阳性率异常");
     }
 
+    /** 创建预约恢复时确保 BF 仍包含该短码。 */
+    public void remember(String shortUri) {
+        holder.get().add(shortUri);
+    }
+
     /** 生成一个 6 位随机 Base62 串。 */
     private String randomCode() {
         char[] buf = new char[Base62Codec.CODE_LENGTH];

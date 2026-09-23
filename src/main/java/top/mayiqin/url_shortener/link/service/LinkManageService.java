@@ -51,9 +51,13 @@ public class LinkManageService {
      *
      * @return {@code true} 短链存在且已更新；{@code false} 短链不存在
      */
-    public boolean updateStatus(String shortUri, int enableStatus) {
+    public boolean updateStatus(String shortUri, String gid, int enableStatus) {
         int updated = linkMapper.update(null, Wrappers.<Link>lambdaUpdate()
                 .eq(Link::getShortUri, shortUri)
+                .eq(Link::getGid, gid)
+                .apply("CAST(gid AS BINARY) = CAST({0} AS BINARY)", gid)
+                // 用户不能通过启用/禁用操作覆盖风控封禁。
+                .ne(Link::getEnableStatus, STATUS_BLOCKED_BY_RISK)
                 .eq(Link::getDelFlag, 0)
                 .set(Link::getEnableStatus, enableStatus));
         if (updated == 0) {
@@ -84,6 +88,7 @@ public class LinkManageService {
         int capped = Math.max(1, Math.min(limit, 100));
         List<LinkGoto> gotos = gotoMapper.selectList(Wrappers.<LinkGoto>lambdaQuery()
                 .eq(LinkGoto::getGid, gid)
+                .apply("CAST(gid AS BINARY) = CAST({0} AS BINARY)", gid)
                 .orderByDesc(LinkGoto::getId)
                 .last("LIMIT " + capped));
         if (gotos.isEmpty()) {
@@ -93,6 +98,9 @@ public class LinkManageService {
         // IN 的是分片键：ShardingSphere 按每个 short_uri 路由，不是广播
         return linkMapper.selectList(Wrappers.<Link>lambdaQuery()
                 .in(Link::getShortUri, uris)
+                .eq(Link::getGid, gid)
+                .apply("CAST(gid AS BINARY) = CAST({0} AS BINARY)", gid)
+                .eq(Link::getDelFlag, 0)
                 .orderByDesc(Link::getId));
     }
 }

@@ -1,5 +1,7 @@
 package top.mayiqin.url_shortener.link.controller;
 
+import top.mayiqin.url_shortener.common.ClientIpResolver;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
@@ -49,13 +51,16 @@ public class RedirectController {
     private final LinkQueryService queryService;
     private final RateLimiter rateLimiter;
     private final StatsCollector statsCollector;
+    private final ClientIpResolver clientIpResolver;
 
     public RedirectController(LinkQueryService queryService,
                               RateLimiter rateLimiter,
-                              StatsCollector statsCollector) {
+                              StatsCollector statsCollector,
+                              ClientIpResolver clientIpResolver) {
         this.queryService = queryService;
         this.rateLimiter = rateLimiter;
         this.statsCollector = statsCollector;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @GetMapping("/{shortUri:[0-9a-zA-Z]{6}}")
@@ -64,7 +69,7 @@ public class RedirectController {
                                          HttpServletResponse response) {
         // 跳转接口的限流要"宽松"：正常用户可能高频访问同一个短链（刷新、多设备）。
         // 和创建接口的严格限流是两套完全不同的策略。
-        if (!rateLimiter.tryAcquireRedirect(clientIp(request), shortUri)) {
+        if (!rateLimiter.tryAcquireRedirect(clientIpResolver.resolve(request), shortUri)) {
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).build();
         }
 
@@ -82,13 +87,4 @@ public class RedirectController {
                 .build();
     }
 
-    /** 取真实客户端 IP。注意 X-Forwarded-For 可被伪造，生产上只信任网关追加的那一段。 */
-    private static String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            int comma = xff.indexOf(',');
-            return comma > 0 ? xff.substring(0, comma).trim() : xff.trim();
-        }
-        return request.getRemoteAddr();
-    }
 }

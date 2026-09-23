@@ -34,6 +34,9 @@ build/
 ### 本地临时中间件实例（Docker 不可用时的替代，数据可随时删除重建） ###
 .localdev/
 
+# 持久统计待投递事件，每个应用实例独占目录
+data/stats-outbox/
+
 ### 本地环境私有配置（含本机数据库密码，不入库） ###
 src/main/resources/application-local.yaml
 

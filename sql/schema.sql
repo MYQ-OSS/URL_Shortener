@@ -8,6 +8,17 @@
 
 SET NAMES utf8mb4;
 
+CREATE TABLE IF NOT EXISTS t_stats_flush_batch (
+  batch_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS t_link_dedup (
+  dedup_key CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  short_uri CHAR(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  PRIMARY KEY (dedup_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SHA256(gid+NUL+url) -> canonical short code';
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- 1. 短链主表
 --

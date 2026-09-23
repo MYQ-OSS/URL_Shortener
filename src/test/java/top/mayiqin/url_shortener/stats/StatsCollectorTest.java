@@ -1,47 +1,113 @@
 package top.mayiqin.url_shortener.stats;
 
-import jakarta.servlet.http.HttpServletRequest;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.amqp.core.*;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
+import top.mayiqin.url_shortener.common.ClientIpResolver;
 import top.mayiqin.url_shortener.stats.service.StatsCollector;
+import top.mayiqin.url_shortener.stats.service.StatsOutbox;
+import java.nio.file.Path;
+import java.nio.file.Files;
+import java.time.Duration;
+import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
 class StatsCollectorTest {
+    @TempDir Path directory;
+    RabbitTemplate rabbit;
+    StatsOutbox outbox;
+    StatsCollector collector;
 
-    @Mock
-    private RabbitTemplate rabbit;
-
-    @Mock
-    private HttpServletRequest request;
-
-    private StatsCollector statsCollector;
-
-    @BeforeEach
-    void setUp() {
-        statsCollector = new StatsCollector(rabbit, true);
-        statsCollector.startPublishers();
+    @BeforeEach void setUp() throws Exception {
+        rabbit = mock(RabbitTemplate.class);
+        outbox = new StatsOutbox(directory.toString(), 2);
+        collector = new StatsCollector(rabbit, outbox, new ClientIpResolver(""), 100, true);
+    }
+    @AfterEach void close() throws Exception {
+        collector.stopPublishers();
+        outbox.close();
+    }
+    private void record() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("203.0.113.5");
+        request.addHeader("X-Forwarded-For", "1.2.3.4");
+        collector.record("Ab12Cd", request);
+    }
+    private void confirm(boolean ack, boolean returned) {
+        doAnswer(invocation -> {
+            MessagePostProcessor processor = invocation.getArgument(3);
+            Message message = processor.postProcessMessage(new Message(new byte[0], new MessageProperties()));
+            assertEquals(MessageDeliveryMode.PERSISTENT, message.getMessageProperties().getDeliveryMode());
+            CorrelationData data = invocation.getArgument(4);
+            if (returned) data.setReturned(new ReturnedMessage(message, 312, "NO_ROUTE", "x", "k"));
+            data.getFuture().complete(new CorrelationData.Confirm(ack, null));
+            return null;
+        }).when(rabbit).convertAndSend(anyString(), anyString(), any(Object.class),
+                any(MessagePostProcessor.class), any(CorrelationData.class));
     }
 
-    @Test
-    @DisplayName("请求入队：record() 不阻塞请求，正确进入 pending 队列")
-    void testRecordEnqueue() {
-        when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.195");
-        when(request.getHeader("User-Agent")).thenReturn("Mozilla/5.0");
-        when(request.getHeader("Referer")).thenReturn("https://google.com");
-
-        statsCollector.record("Ab12Cd", request);
-
-        // 即使没有物理连接，入队逻辑也是原子的且增加 pending 数（或被后台消费）
-        assertTrue(statsCollector.pendingCount() >= 0);
-        assertEquals(0, statsCollector.droppedCount());
+    @Test void eventIsDurableBeforeAnyNetworkCallAndIpIsTrusted() throws Exception {
+        record();
+        assertEquals(1, collector.pendingCount());
+        Path file = outbox.poll();
+        String payload = outbox.read(file);
+        assertTrue(payload.contains("203.0.113.5"));
+        assertFalse(payload.contains("1.2.3.4"));
+        outbox.retry(file);
+        verify(rabbit, never()).convertAndSend(anyString(), anyString(), any(Object.class),
+                any(MessagePostProcessor.class), any(CorrelationData.class));
+        outbox.close();
+        try (StatsOutbox reopened = new StatsOutbox(directory.toString(), 2)) {
+            assertEquals(1, reopened.pendingCount());
+            assertEquals(payload, reopened.read(reopened.poll()));
+        }
+    }
+    @Test void successfulAckRemovesDiskCopy() {
+        confirm(true, false);
+        record();
+        collector.startPublishers();
+        await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertEquals(0, collector.pendingCount()));
+        assertEquals(0, collector.droppedCount());
+    }
+    @Test void nackKeepsDiskCopy() throws Exception {
+        confirm(false, false);
+        assertFailureIsRetained();
+    }
+    @Test void returnedMessageKeepsDiskCopyEvenWithAck() throws Exception {
+        confirm(true, true);
+        assertFailureIsRetained();
+    }
+    @Test void confirmTimeoutKeepsDiskCopy() throws Exception {
+        assertFailureIsRetained();
+    }
+    private void assertFailureIsRetained() throws Exception {
+        record();
+        collector.startPublishers();
+        await().atMost(Duration.ofSeconds(3)).until(() -> collector.publishFailureCount() > 0);
+        collector.stopPublishers();
+        assertEquals(1, collector.pendingCount());
+        try (var files = Files.list(directory)) {
+            assertEquals(1, files.filter(p -> p.toString().endsWith(".json")).count());
+        }
+        assertEquals(0, collector.droppedCount());
+    }
+    @Test void fullSpoolIsVisibleAndNeverEvictsAcceptedEvents() {
+        record(); record(); record();
+        assertEquals(2, collector.pendingCount());
+        assertEquals(1, collector.droppedCount());
+    }
+    @Test void interruptedPublisherRetainsUnconfirmedEventForRestart() throws Exception {
+        record();
+        collector.startPublishers();
+        collector.stopPublishers();
+        outbox.close();
+        try (StatsOutbox reopened = new StatsOutbox(directory.toString(), 2)) {
+            assertEquals(1, reopened.pendingCount());
+        }
     }
 }
