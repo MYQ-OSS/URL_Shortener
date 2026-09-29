@@ -41,6 +41,7 @@ public class BloomFilterHolder {
 
     private volatile RBloomFilter<String> active;
     private volatile int activeVersion = -1;
+    private volatile boolean trusted;
 
     public BloomFilterHolder(RedissonClient redisson,
                              @Value("${shortlink.bloom.expected-insertions:10000000}") long expectedInsertions,
@@ -79,10 +80,14 @@ public class BloomFilterHolder {
         return activeVersion;
     }
 
+    public boolean isTrusted() { return trusted; }
+
     /** 重建完成后由 {@link BloomFilterRebuilder} 调用，零延迟切换本实例。 */
     void switchTo(int version) {
         this.active = openOrInit(version);
         this.activeVersion = version;
+        Object ready = redisson.getBucket(BloomFilterRebuilder.KEY_READY_VERSION).get();
+        this.trusted = ready != null && Integer.toString(version).equals(ready.toString());
         log.info("布隆过滤器已切换到 v{}", version);
     }
 
@@ -104,6 +109,13 @@ public class BloomFilterHolder {
         if (remote != activeVersion) {
             log.info("检测到布隆过滤器版本变化: v{} -> v{}", activeVersion, remote);
             switchTo(remote);
+        } else if (active != null && !active.isExists()) {
+            // Redis 数据被清空后，旧对象不能继续宣称包含完整历史短码。
+            this.active = openOrInit(remote);
+            this.trusted = false;
+        } else {
+            Object ready = redisson.getBucket(BloomFilterRebuilder.KEY_READY_VERSION).get();
+            this.trusted = ready != null && Integer.toString(remote).equals(ready.toString());
         }
     }
 
@@ -112,6 +124,7 @@ public class BloomFilterHolder {
         if (!bf.isExists()) {
             // tryInit 是幂等的：多实例同时调用只有一个真正初始化
             bf.tryInit(expectedInsertions, falseProbability);
+            redisson.getBucket(BloomFilterRebuilder.KEY_READY_VERSION).delete();
             redisson.getBucket(BloomFilterRebuilder.KEY_VERSION).set(String.valueOf(version));
         }
         return bf;

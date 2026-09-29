@@ -12,7 +12,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@EnabledIfEnvironmentVariable(named = "SHORTLINK_INTEGRATION_TESTS", matches = "true")
+@EnabledIfEnvironmentVariable(named = "SHORTLINK_LOCAL_INTEGRATION_TESTS", matches = "true")
 class UrlShortenerApplicationTests {
 
     @Test

@@ -6,6 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 import top.mayiqin.url_shortener.common.Base62Codec;
 import top.mayiqin.url_shortener.common.RedisAvailability;
@@ -15,6 +18,8 @@ import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -22,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><b>这是整个系统 QPS 最高的路径，必须"瘦"到极致。</b>
  * 它刻意不走 Spring Security 过滤器链、不开事务、不打同步 INFO 日志、
- * 缓存里直接存 URL 字符串而不是 JSON 对象（省掉反序列化）。
+ * 缓存里存紧凑的 URL + 截止时间字符串，命中后仍能精确判断到期。
  *
  * <h3>完整防护链（顺序有讲究，每一步的位置都要能解释）</h3>
  * <pre>
@@ -57,16 +62,9 @@ public class LinkQueryService {
     private static final String KEY_NULL = "link:null:";
     /** 击穿保护锁 key 前缀。 */
     private static final String KEY_LOCK = "link:lock:";
+    private static final String KEY_VERSION = "link:ver:";
 
-    /**
-     * 长链缓存 TTL。
-     *
-     * <p>刻意设得很长（30 天）。理由：<b>短码 → 长链的映射近乎不可变</b>，
-     * 缓存几乎不会失效。这带来一个很漂亮的架构优势——
-     * <b>MySQL 挂了跳转链路仍然可用</b>，只有创建链路降级为不可用。
-     */
-    private static final Duration TTL_LINK = Duration.ofDays(30);
-
+    // 正向缓存的 30 天上限与实际有效期由 CachedLink.ttl() 统一计算。
     /**
      * 空值缓存 TTL 必须<b>短</b>（2 分钟）。
      *
@@ -83,6 +81,8 @@ public class LinkQueryService {
     private final LinkMapper linkMapper;
     private final DbReadGuard dbGuard;
     private final RedisAvailability redisAvailability;
+    private final DefaultRedisScript<Long> invalidateScript = new DefaultRedisScript<>();
+    private final DefaultRedisScript<Long> writeScript = new DefaultRedisScript<>();
 
     /**
      * 压测分阶段开关（见 benchmark/README.md 2.5 的逐阶段表）：
@@ -112,6 +112,12 @@ public class LinkQueryService {
         this.linkMapper = linkMapper;
         this.dbGuard = dbGuard;
         this.redisAvailability = redisAvailability;
+        invalidateScript.setScriptSource(new ResourceScriptSource(
+                new ClassPathResource("lua/invalidate_link_cache.lua")));
+        invalidateScript.setResultType(Long.class);
+        writeScript.setScriptSource(new ResourceScriptSource(
+                new ClassPathResource("lua/write_link_cache.lua")));
+        writeScript.setResultType(Long.class);
         this.l1Enabled = l1Enabled;
         this.l2Enabled = l2Enabled;
         if (!l1Enabled || !l2Enabled) {
@@ -134,7 +140,11 @@ public class LinkQueryService {
         if (l1Enabled) {
             String hit = localCache.getIfPresent(shortUri);
             if (hit != null) {
-                return hit.isEmpty() ? null : hit;   // 空串是本地的空值标记
+                if (hit.isEmpty()) return null;
+                CachedLink cached = CachedLink.parse(hit);
+                if (cached != null) return cached.expired() ? null : cached.url();
+                // 旧版本只有 URL，没有有效期和状态信息；必须回源校验。
+                localCache.invalidate(shortUri);
             }
         }
 
@@ -162,8 +172,13 @@ public class LinkQueryService {
         // ── 2. L2 Redis ───────────────────────────────────────────
         String cached = redis.opsForValue().get(KEY_LINK + shortUri);
         if (cached != null) {
-            putLocal(shortUri, cached);
-            return cached;
+            CachedLink entry = CachedLink.parse(cached);
+            if (entry != null) {
+                putLocal(shortUri, cached);
+                return entry.expired() ? null : entry.url();
+            }
+            // 滚动升级时不能继续信任旧版不带截止时间的 URL 缓存。
+            redis.delete(KEY_LINK + shortUri);
         }
 
         // ── 3. 布隆过滤器：false 表示一定不存在 ──────────────────────
@@ -184,28 +199,35 @@ public class LinkQueryService {
             // 只等 500ms。等不到说明有人正在回源，与其继续排队不如直接查一次库——
             // 排队等待会把线程占死，在高并发下比多查一次库更危险。
             if (!lock.tryLock(500, 3000, TimeUnit.MILLISECONDS)) {
-                return loadFromDb(shortUri);
+                return fallback(shortUri);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return loadFromDb(shortUri);
+            return fallback(shortUri);
         }
         try {
             // 双重检查：等锁期间可能已经有人回写了
             String again = redis.opsForValue().get(KEY_LINK + shortUri);
             if (again != null) {
-                putLocal(shortUri, again);
-                return again;
+                CachedLink entry = CachedLink.parse(again);
+                if (entry != null) {
+                    putLocal(shortUri, again);
+                    return entry.expired() ? null : entry.url();
+                }
+                redis.delete(KEY_LINK + shortUri);
             }
-            String url = loadFromDb(shortUri);
-            if (url == null) {
-                redis.opsForValue().set(KEY_NULL + shortUri, "1", TTL_NULL);
+            String version = currentVersion(shortUri);
+            CachedLink entry = loadFromDb(shortUri);
+            if (entry == null) {
+                if (!writeCache(shortUri, version, false, "1", TTL_NULL)) return fallback(shortUri);
                 putLocal(shortUri, "");
             } else {
-                redis.opsForValue().set(KEY_LINK + shortUri, url, TTL_LINK);
-                putLocal(shortUri, url);
+                Duration ttl = entry.ttl();
+                if (ttl.isNegative() || ttl.isZero()) return null;
+                if (!writeCache(shortUri, version, true, entry.encode(), ttl)) return fallback(shortUri);
+                putLocal(shortUri, entry.encode());
             }
-            return url;
+            return entry == null || entry.expired() ? null : entry.url();
         } finally {
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
@@ -231,17 +253,34 @@ public class LinkQueryService {
         }
     }
 
-    private String loadFromDb(String shortUri) {
+    private CachedLink loadFromDb(String shortUri) {
         Link link = dbGuard.execute(() -> linkMapper.selectOne(Wrappers.<Link>lambdaQuery()
                 .eq(Link::getShortUri, shortUri)
                 .eq(Link::getDelFlag, 0)));
-        return (link != null && link.redirectable()) ? link.getOriginUrl() : null;
+        return (link != null && link.redirectable())
+                ? CachedLink.of(link.getOriginUrl(), link.getValidType() != null && link.getValidType() == 1
+                        ? link.getValidEnd() : null) : null;
     }
 
     private String fallback(String shortUri) {
-        String url = loadFromDb(shortUri);
-        putLocal(shortUri, url == null ? "" : url);
-        return url;
+        CachedLink entry = loadFromDb(shortUri);
+        putLocal(shortUri, entry == null ? "" : entry.encode());
+        return entry == null || entry.expired() ? null : entry.url();
+    }
+
+    private String currentVersion(String shortUri) {
+        String version = redis.opsForValue().get(KEY_VERSION + shortUri);
+        return version == null ? "0" : version;
+    }
+
+    private boolean writeCache(String shortUri, String expectedVersion, boolean positive,
+                               String payload, Duration ttl) {
+        String key = (positive ? KEY_LINK : KEY_NULL) + shortUri;
+        String other = (positive ? KEY_NULL : KEY_LINK) + shortUri;
+        Long saved = redis.execute(writeScript, List.of(KEY_VERSION + shortUri, key, other),
+                expectedVersion, payload, Long.toString(Math.max(1, ttl.toMillis())));
+        if (saved == null) throw new IllegalStateException("缓存写入脚本未返回结果");
+        return saved == 1L;
     }
 
     /**
@@ -255,36 +294,46 @@ public class LinkQueryService {
      * 所以 Caffeine 必须<b>同时</b>设短 TTL 作为第二层保险：
      * <ul>
      *   <li>广播：让 99% 的情况下 100ms 内生效</li>
-     *   <li>短 TTL：保证最坏情况下 5 秒必定生效</li>
+     *   <li>Redis 正常但广播丢失：短 TTL 最多保留旧 L1 5 秒</li>
+     *   <li>Redis 故障导致 DEL 失败：本地消息恢复后重试</li>
      * </ul>
      * 两层各解决一半问题。见 {@code CacheInvalidateListener}。
      */
-    public void invalidate(String shortUri) {
+    public boolean invalidate(String shortUri) {
+        boolean cleared = true;
         if (l2Enabled) {
             try {
-                redis.delete(KEY_LINK + shortUri);
-                redis.delete(KEY_NULL + shortUri);
-                redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
+                Long result = redis.execute(invalidateScript,
+                        List.of(KEY_VERSION + shortUri, KEY_LINK + shortUri, KEY_NULL + shortUri),
+                        CacheInvalidateListener.TOPIC, shortUri);
+                if (result == null || result != 1L) throw new IllegalStateException("缓存失效脚本未返回成功");
             } catch (RuntimeException e) {
-                // Redis 故障时广播失效：本实例下面照样清 L1，其他实例靠 5s TTL 兜底
+                // 调用方保留待失效消息，Redis 恢复后继续 DEL + 广播。
                 redisDownWarn(e);
+                redisAvailability.failed();
+                cleared = false;
             }
         }
         if (l1Enabled) {
             localCache.invalidate(shortUri);
         }
+        return cleared;
     }
 
     /** 创建成功后预热：这是消掉"空值缓存导致新短链 404"窗口的关键。 */
-    public void warmUp(String shortUri, String originUrl) {
+    public void warmUp(String shortUri, String originUrl, LocalDateTime validEnd) {
         if (l1Enabled) localCache.invalidate(shortUri);
         if (!l2Enabled) {
             return;   // 压测阶段关闭 L2 时没有可预热的东西
         }
         try {
-            redis.delete(KEY_NULL + shortUri);
-            redis.opsForValue().set(KEY_LINK + shortUri, originUrl, TTL_LINK);
-            redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
+            CachedLink entry = CachedLink.of(originUrl, validEnd);
+            Duration ttl = entry.ttl();
+            if (ttl.isZero() || ttl.isNegative()) return;
+            String version = currentVersion(shortUri);
+            if (writeCache(shortUri, version, true, entry.encode(), ttl)) {
+                redis.convertAndSend(CacheInvalidateListener.TOPIC, shortUri);
+            }
         } catch (RuntimeException e) {
             // Redis 故障时预热失败：首次访问会 miss → 直查 DB（降级路径）兜住
             redisDownWarn(e);

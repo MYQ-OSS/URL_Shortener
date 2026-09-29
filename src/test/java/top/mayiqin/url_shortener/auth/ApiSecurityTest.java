@@ -64,6 +64,18 @@ class ApiSecurityTest {
                 .andExpect(status().isOk()).andExpect(content().string("http://localhost:8080/Ab12Cd"));
         verify(limiter).tryAcquireCreate("default");
     }
+    @Test void invalidExpiryCombosAreRejectedBeforeCreation() throws Exception {
+        mvc.perform(post("/api/link").header("Authorization", TOKEN).contentType("application/json")
+                .content("{\"originUrl\":\"https://example.com\",\"gid\":\"default\",\"validType\":1}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/link").header("Authorization", TOKEN).contentType("application/json")
+                .content("{\"originUrl\":\"https://example.com\",\"gid\":\"default\",\"validType\":2}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/link").header("Authorization", TOKEN).contentType("application/json")
+                .content("{\"originUrl\":\"https://example.com\",\"gid\":\"default\",\"validType\":1,\"validEnd\":\"bad-date\"}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(create);
+    }
     @Test void publicRedirectNeedsNoTokenAndReturnsExpectedStatus() throws Exception {
         when(limiter.tryAcquireRedirect(any(), eq("Ab12Cd"))).thenReturn(true);
         when(query.resolve("Ab12Cd")).thenReturn("https://example.com");

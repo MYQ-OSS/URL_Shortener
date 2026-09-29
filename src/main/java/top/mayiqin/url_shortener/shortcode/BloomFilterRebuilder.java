@@ -43,6 +43,8 @@ public class BloomFilterRebuilder {
 
     /** 当前生效的 BF 版本号存在这个 key 里。 */
     public static final String KEY_VERSION = "shortlink:bloom:version";
+    /** 只有完成全量 DB 重建后才写入；空 BF 绝不能宣称可判定不存在。 */
+    public static final String KEY_READY_VERSION = "shortlink:bloom:ready-version";
     /** BF 本体的 key 前缀，后面拼版本号。 */
     public static final String KEY_PREFIX = "shortlink:bloom:uri:v";
 
@@ -127,6 +129,7 @@ public class BloomFilterRebuilder {
             }
 
             // 切指针。这一步之前线上一直在读旧 BF，所以没有 404 窗口。
+            redisson.getBucket(KEY_READY_VERSION).set(String.valueOf(newVersion));
             redisson.getBucket(KEY_VERSION).set(String.valueOf(newVersion));
             holder.switchTo(newVersion);        // 本实例零延迟切换；其他实例靠 30s 定时对版本
 

@@ -27,3 +27,23 @@ groups:
           severity: warning
         annotations:
           summary: "无法查询统计队列，请检查 RabbitMQ"
+      - alert: ShortlinkGotoIndexSyncFailed
+        expr: shortlink_messages_goto_failed > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "短链 gid 索引补偿达到重试上限，请排查后在管理接口重新入队"
+      - alert: ShortlinkCacheInvalidationBacklog
+        expr: shortlink_messages_cache_invalidation_pending > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "缓存失效消息持续积压，禁用短链可能仍被旧缓存跳转"
+      - alert: ShortlinkBloomNotReady
+        expr: shortlink_bloom_trusted == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "布隆过滤器尚未完成全量重建，请执行受保护的重建接口并检查 DB 回源压力"

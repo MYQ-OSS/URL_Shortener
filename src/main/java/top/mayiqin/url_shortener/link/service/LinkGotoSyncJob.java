@@ -146,4 +146,28 @@ public class LinkGotoSyncJob {
                 .set(LocalMessage::getNextRetry, LocalDateTime.now().plusSeconds(backoffSeconds)));
         log.warn("本地消息补偿失败（第 {} 次）: {} — {}", next, msg.getPayload(), cause.getMessage());
     }
+
+    /** 仅供管理员查看需要人工介入的消息，查询路径允许跨分片。 */
+    public List<LocalMessage> listFailed(int limit) {
+        int capped = Math.max(1, Math.min(limit, 100));
+        return messageMapper.selectList(Wrappers.<LocalMessage>lambdaQuery()
+                .eq(LocalMessage::getBizType, BIZ_TYPE)
+                .eq(LocalMessage::getStatus, 2)
+                .orderByAsc(LocalMessage::getCreateTime)
+                .last("LIMIT " + capped));
+    }
+
+    /** 人工排查故障并恢复依赖后，将一条失败消息重新放入待办队列。 */
+    public boolean retryFailed(long id, String shortUri) {
+        int changed = messageMapper.update(null, Wrappers.<LocalMessage>lambdaUpdate()
+                .eq(LocalMessage::getId, id)
+                .eq(LocalMessage::getShardKey, shortUri)
+                .eq(LocalMessage::getBizType, BIZ_TYPE)
+                .eq(LocalMessage::getStatus, 2)
+                .set(LocalMessage::getStatus, 0)
+                .set(LocalMessage::getRetryCount, 0)
+                .set(LocalMessage::getNextRetry, LocalDateTime.now()));
+        if (changed > 0) log.info("管理员已重试异构索引消息 id={} shortUri={}", id, shortUri);
+        return changed > 0;
+    }
 }

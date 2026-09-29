@@ -103,6 +103,6 @@ public class ShortCodeGenerator {
 
     /** 供跳转链路使用：短码是否"可能存在"。false 表示<b>一定不存在</b>，可直接 404。 */
     public boolean mightExist(String code) {
-        return Base62Codec.isWellFormed(code) && holder.get().contains(code);
+        return Base62Codec.isWellFormed(code) && (!holder.isTrusted() || holder.get().contains(code));
     }
 }

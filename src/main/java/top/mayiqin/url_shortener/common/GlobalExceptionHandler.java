@@ -4,6 +4,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -46,6 +48,16 @@ public class GlobalExceptionHandler {
                 .map(f -> f.getField() + " " + f.getDefaultMessage())
                 .findFirst().orElse("请求参数非法");
         return ResponseEntity.badRequest().body(Map.of("error", msg));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> malformedBody(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", "请求体格式或字段类型非法"));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, String>> invalidParameter(MethodArgumentTypeMismatchException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", "请求参数类型非法"));
     }
 
     /**

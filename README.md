@@ -52,7 +52,9 @@ RabbitMQ 缺席时统计事件保留在本地持久目录，恢复后确认补�
 |---|---|
 | `POST /api/link` | 创建短链。`{originUrl, gid, forceNew?, validType?, validEnd?, describe?}`；默认按 (gid, url_hash) 幂等，`forceNew=true` 强制新码（渠道归因） |
 | `GET /{shortUri}` | 302 跳转；不存在/禁用/过期 → 410 |
-| `POST /api/link/{uri}/disable` / `enable` | 禁用/恢复：先改 DB 再清多级缓存 + Pub/Sub 广播，最坏 5s 生效（短 TTL 兜底） |
+| `POST /api/link/{uri}/disable` / `enable` | 禁用/恢复：状态与失效消息同事务；Redis 正常但广播丢失时 L1 最多保留 5s，Redis 故障后会补偿清理 L2 |
+| `GET /admin/messages/failed` | 查看达到重试上限的 gid 索引消息 |
+| `POST /admin/messages/{uri}/{id}/retry` | 排除故障后将指定消息重新入队 |
 | `POST /admin/bloom/rebuild` | 双 BF 滚动重建（压测灌数后必调，ADR-013） |
 | `POST /admin/cache/local/clear` | 清本地缓存（每轮压测前调） |
 | `GET /admin/stats` | L1 命中率 / 发号器水位 / BF 版本 / 统计链路健康度 |

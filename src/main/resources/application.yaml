@@ -106,7 +106,8 @@ shortlink:
     # 期望延迟从 207us 降到 138us（-33%）。23MB 对 JVM 是白菜价，所以选 100k。
     local-max-size: 100000
     # 5 秒不是为了容量，是为了一致性兜底：
-    # Pub/Sub 广播失效可能丢消息，短 TTL 保证最坏 5 秒必定生效。
+    # Redis 正常而 Pub/Sub 丢消息时，短 TTL 最多保留旧 L1 5 秒。
+    # Redis 本身故障时，旧 L2 在恢复后靠持久失效消息补偿清理。
     local-ttl-seconds: 5
 
   bloom:

@@ -9,6 +9,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import top.mayiqin.url_shortener.idgen.SegmentIdGenerator;
 import top.mayiqin.url_shortener.link.service.ExpiredLinkCleanupJob;
+import top.mayiqin.url_shortener.link.service.LinkGotoSyncJob;
+import top.mayiqin.url_shortener.link.entity.LocalMessage;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import top.mayiqin.url_shortener.risk.UrlRiskChecker;
 import top.mayiqin.url_shortener.shortcode.BloomFilterHolder;
 import top.mayiqin.url_shortener.shortcode.BloomFilterRebuilder;
@@ -22,7 +26,7 @@ import java.util.Map;
 /**
  * 运维/压测辅助接口。
  *
- * <p>受 AdminInterceptor 拦截保护，访问需在 Header 携带 'X-Admin-Token' 或 Query 携带 'token'。
+ * <p>受 AdminInterceptor 拦截保护，访问需在 Header 携带 'X-Admin-Token'。
  */
 @RestController
 @RequestMapping("/admin")
@@ -36,6 +40,7 @@ public class AdminController {
     private final StatsFlushService statsFlushService;
     private final UrlRiskChecker riskChecker;
     private final ExpiredLinkCleanupJob cleanupJob;
+    private final LinkGotoSyncJob gotoSyncJob;
 
     public AdminController(BloomFilterRebuilder rebuilder,
                            BloomFilterHolder bloomHolder,
@@ -44,7 +49,8 @@ public class AdminController {
                            StatsCollector statsCollector,
                            StatsFlushService statsFlushService,
                            UrlRiskChecker riskChecker,
-                           ExpiredLinkCleanupJob cleanupJob) {
+                           ExpiredLinkCleanupJob cleanupJob,
+                           LinkGotoSyncJob gotoSyncJob) {
         this.rebuilder = rebuilder;
         this.bloomHolder = bloomHolder;
         this.localCache = localCache;
@@ -53,6 +59,7 @@ public class AdminController {
         this.statsFlushService = statsFlushService;
         this.riskChecker = riskChecker;
         this.cleanupJob = cleanupJob;
+        this.gotoSyncJob = gotoSyncJob;
     }
 
     /**
@@ -125,6 +132,7 @@ public class AdminController {
         out.put("localCache", local);
         out.put("idGenerator", idgen);
         out.put("bloomVersion", bloomHolder.version());
+        out.put("bloomTrusted", bloomHolder.isTrusted());
         out.put("stats", stats);
         return ResponseEntity.ok(out);
     }
@@ -148,5 +156,16 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> cleanExpiredLinks() {
         long cleaned = cleanupJob.cleanupExpiredLinks();
         return ResponseEntity.ok(Map.of("status", "success", "cleanedRows", cleaned));
+    }
+
+    @GetMapping("/messages/failed")
+    public ResponseEntity<List<LocalMessage>> failedMessages(@RequestParam(defaultValue = "20") int limit) {
+        return ResponseEntity.ok(gotoSyncJob.listFailed(limit));
+    }
+
+    @PostMapping("/messages/{shortUri:[0-9a-zA-Z]{6}}/{id}/retry")
+    public ResponseEntity<Void> retryFailedMessage(@PathVariable String shortUri, @PathVariable long id) {
+        return gotoSyncJob.retryFailed(id, shortUri)
+                ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 }

@@ -85,7 +85,7 @@ class LinkCreateServiceTest {
         verify(riskChecker).check(originUrl);
         verify(linkMapper).insert((Link) any());
         verify(messageMapper).insert((LocalMessage) any());
-        verify(queryService).warmUp("Ab12Cd", originUrl);
+        verify(queryService).warmUp("Ab12Cd", originUrl, null);
     }
 
     @Test

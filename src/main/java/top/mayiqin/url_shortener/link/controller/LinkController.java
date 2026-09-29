@@ -2,12 +2,14 @@ package top.mayiqin.url_shortener.link.controller;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import top.mayiqin.url_shortener.link.entity.Link;
+import top.mayiqin.url_shortener.link.LinkValidity;
 import top.mayiqin.url_shortener.link.service.LinkCreateService;
 import top.mayiqin.url_shortener.link.service.LinkManageService;
 import top.mayiqin.url_shortener.ratelimit.RateLimiter;
@@ -103,6 +105,11 @@ public class LinkController {
 
         private Integer validType;
         private LocalDateTime validEnd;
+
+        @AssertTrue(message = "永久短链不能设置 validEnd；自定义有效期必须晚于当前时间（Asia/Shanghai）")
+        public boolean isValidValidity() {
+            return LinkValidity.isValid(validType, validEnd);
+        }
 
         @Size(max = 128)
         private String describe;

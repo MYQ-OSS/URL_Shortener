@@ -3,10 +3,13 @@ package top.mayiqin.url_shortener.link.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import top.mayiqin.url_shortener.link.entity.Link;
 import top.mayiqin.url_shortener.link.entity.LinkGoto;
+import top.mayiqin.url_shortener.link.entity.LocalMessage;
 import top.mayiqin.url_shortener.link.mapper.LinkGotoMapper;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
+import top.mayiqin.url_shortener.link.mapper.LocalMessageMapper;
 
 import java.util.List;
 
@@ -16,13 +19,14 @@ import java.util.List;
  * <h3>顺序必须是"先改 DB，再清缓存"（ADR-008）</h3>
  * 反过来（先清缓存后改 DB）有一个竞态窗口：缓存刚清掉，一个跳转请求 miss 后
  * 回源查到<b>还没改的</b> DB 旧值，把"启用"状态重新写回缓存——封禁就被顶掉了。
- * 先改 DB 的话，最坏情况只是旧缓存多活到广播/短 TTL 生效，秒级窗口，可量化。
+ * 先改 DB；缓存失效意图与状态更新同事务提交，Redis 失败后由任务补偿。
  *
  * <h3>封禁的生效时延（要能报出数字）</h3>
  * <pre>
  *   Redis L2         DEL 立即生效
  *   本地 L1（本实例） invalidate 立即生效
- *   本地 L1（其他实例）Pub/Sub 广播 ~100ms；广播丢失时靠 Caffeine 5s TTL 兜底
+ *   本地 L1（其他实例）Pub/Sub 广播；广播丢失时靠 Caffeine 5s TTL 兜底
+ *   Redis 故障期间     旧 L2 在恢复后由本地消息表重试清理，不能承诺固定秒数
  * </pre>
  */
 @Slf4j
@@ -37,13 +41,19 @@ public class LinkManageService {
     private final LinkMapper linkMapper;
     private final LinkGotoMapper gotoMapper;
     private final LinkQueryService queryService;
+    private final LocalMessageMapper messageMapper;
+    private final TransactionTemplate tx;
 
     public LinkManageService(LinkMapper linkMapper,
                              LinkGotoMapper gotoMapper,
-                             LinkQueryService queryService) {
+                             LinkQueryService queryService,
+                             LocalMessageMapper messageMapper,
+                             TransactionTemplate tx) {
         this.linkMapper = linkMapper;
         this.gotoMapper = gotoMapper;
         this.queryService = queryService;
+        this.messageMapper = messageMapper;
+        this.tx = tx;
     }
 
     /**
@@ -52,7 +62,8 @@ public class LinkManageService {
      * @return {@code true} 短链存在且已更新；{@code false} 短链不存在
      */
     public boolean updateStatus(String shortUri, String gid, int enableStatus) {
-        int updated = linkMapper.update(null, Wrappers.<Link>lambdaUpdate()
+        Boolean updated = tx.execute(status -> {
+            int rows = linkMapper.update(null, Wrappers.<Link>lambdaUpdate()
                 .eq(Link::getShortUri, shortUri)
                 .eq(Link::getGid, gid)
                 .apply("CAST(gid AS BINARY) = CAST({0} AS BINARY)", gid)
@@ -60,12 +71,26 @@ public class LinkManageService {
                 .ne(Link::getEnableStatus, STATUS_BLOCKED_BY_RISK)
                 .eq(Link::getDelFlag, 0)
                 .set(Link::getEnableStatus, enableStatus));
-        if (updated == 0) {
+            if (rows == 0) return false;
+            messageMapper.insert(CacheInvalidationRetryJob.pendingMessage(shortUri));
+            return true;
+        });
+        if (!Boolean.TRUE.equals(updated)) {
             return false;
         }
-        // DB 已是新状态，此刻 miss 回源也只会读到"禁用"，不会把旧值写回缓存
-        queryService.invalidate(shortUri);
-        log.info("短链 {} 状态已更新为 {}，多级缓存已失效", shortUri, enableStatus);
+        // DB 与消息已同库提交；实时失效失败时由待办消息在 Redis 恢复后补偿。
+        if (queryService.invalidate(shortUri)) {
+            try {
+                messageMapper.update(null, Wrappers.<LocalMessage>lambdaUpdate()
+                        .eq(LocalMessage::getShardKey, shortUri)
+                        .eq(LocalMessage::getBizType, CacheInvalidationRetryJob.BIZ_TYPE)
+                        .eq(LocalMessage::getStatus, 0)
+                        .set(LocalMessage::getStatus, 1));
+            } catch (RuntimeException e) {
+                log.warn("缓存已失效，但本地消息标记失败，后台会安全重试: {}", e.getMessage());
+            }
+        }
+        log.info("短链 {} 状态已更新为 {}，缓存失效已执行或待重试", shortUri, enableStatus);
         return true;
     }
 

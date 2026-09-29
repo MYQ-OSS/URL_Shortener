@@ -38,8 +38,8 @@ public class CacheConfig {
      *       简历和面试里混着说会被问穿，必须分开报。
      *       <p>另外 Caffeine 用 W-TinyLFU（内含 Frequency Sketch）淘汰，
      *       本身就有热点倾向性，等于自带了一层轻量的热点探测。</li>
-     *   <li>{@code expireAfterWrite(5s)} —— 不是为了容量，而是为了<b>一致性兜底</b>：
-     *       Pub/Sub 广播失效可能丢消息，短 TTL 保证最坏 5 秒必定生效。</li>
+     *   <li>{@code expireAfterWrite(5s)} —— Redis 可用但 Pub/Sub 广播丢失时，
+     *       本地实例最晚 5 秒重新从 L2 读取；Redis 失效期间的旧 L2 值由持久消息补偿清除。</li>
      *   <li>{@code recordStats()} —— 命中率要能被 Prometheus 抓到，否则没法证明缓存有效。</li>
      * </ul>
      */

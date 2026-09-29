@@ -22,6 +22,29 @@ class LinkGotoSyncJobTest {
     @Test void failureSchedulesRetry() throws Exception { runCase(false, 0, 0); }
     @Test void fifthFailureRequiresManualRecovery() throws Exception { runCase(false, 4, 2); }
 
+    @Test void adminRetryRequiresFailedStatusIdAndShardKey() {
+        MapperMetadata.initialize(LocalMessage.class);
+        var messages = mock(LocalMessageMapper.class);
+        var job = new LinkGotoSyncJob(messages, mock(LinkGotoMapper.class), mock(RedissonClient.class));
+        when(messages.update(isNull(), any())).thenReturn(1);
+        assertTrue(job.retryFailed(100L, "Ab12Cd"));
+        ArgumentCaptor<LambdaUpdateWrapper> wrapper = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(messages).update(isNull(), wrapper.capture());
+        String where = wrapper.getValue().getSqlSegment();
+        assertTrue(where.contains("shard_key"));
+        assertTrue(where.contains("biz_type"));
+        assertTrue(where.contains("status"));
+        assertTrue(wrapper.getValue().getSqlSet().contains("retry_count"));
+        assertTrue(wrapper.getValue().getSqlSet().contains("next_retry"));
+    }
+
+    @Test void successfulOrOtherUsersMessageCannotBeReset() {
+        MapperMetadata.initialize(LocalMessage.class);
+        var messages = mock(LocalMessageMapper.class);
+        var job = new LinkGotoSyncJob(messages, mock(LinkGotoMapper.class), mock(RedissonClient.class));
+        assertFalse(job.retryFailed(100L, "Wrong1"));
+    }
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void runCase(boolean duplicate, int retryCount, int expectedStatus) throws Exception {
         MapperMetadata.initialize(LocalMessage.class, LinkGoto.class);

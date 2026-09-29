@@ -9,6 +9,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import top.mayiqin.url_shortener.idgen.SegmentIdGenerator;
 import top.mayiqin.url_shortener.link.entity.Link;
+import top.mayiqin.url_shortener.link.LinkValidity;
 import top.mayiqin.url_shortener.link.entity.LocalMessage;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 import top.mayiqin.url_shortener.link.mapper.LocalMessageMapper;
@@ -102,6 +103,7 @@ public class LinkCreateService {
      */
     public String create(String originUrl, String gid, boolean forceNew,
                          Integer validType, LocalDateTime validEnd, String describe) {
+        LocalDateTime normalizedEnd = LinkValidity.normalizedEnd(validType, validEnd);
 
         // ── 1. 风控：脏数据不进系统 ──────────────────────────────────
         riskChecker.check(originUrl);
@@ -131,7 +133,7 @@ public class LinkCreateService {
             link.setGid(gid);
             link.setEnableStatus(0);
             link.setValidType(validType == null ? 0 : validType);
-            link.setValidEnd(validEnd);
+            link.setValidEnd(normalizedEnd);
             link.setClickNum(0);
             link.setDescribe(describe);
             link.setDelFlag(0);
@@ -158,7 +160,7 @@ public class LinkCreateService {
             }
 
             // ── 5. 预热缓存：删空值缓存 + 写长链缓存 → 返回即可访问，不会 404 ──
-            queryService.warmUp(shortUri, originUrl);
+            queryService.warmUp(shortUri, originUrl, normalizedEnd);
 
             return fullUrl(defaultDomain, shortUri);
         }

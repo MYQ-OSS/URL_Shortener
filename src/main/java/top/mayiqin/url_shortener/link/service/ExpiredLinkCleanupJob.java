@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import top.mayiqin.url_shortener.link.entity.Link;
+import top.mayiqin.url_shortener.link.LinkValidity;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 
 import java.time.LocalDateTime;
@@ -31,16 +31,13 @@ public class ExpiredLinkCleanupJob {
 
     private final LinkMapper linkMapper;
     private final RedissonClient redisson;
-    private final StringRedisTemplate redis;
     private final LinkQueryService queryService;
 
     public ExpiredLinkCleanupJob(LinkMapper linkMapper,
                                 RedissonClient redisson,
-                                StringRedisTemplate redis,
                                 LinkQueryService queryService) {
         this.linkMapper = linkMapper;
         this.redisson = redisson;
-        this.redis = redis;
         this.queryService = queryService;
     }
 
@@ -62,13 +59,14 @@ public class ExpiredLinkCleanupJob {
 
             log.info("开始执行过期短链接定期清理任务...");
             long totalCleaned = 0;
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime now = LocalDateTime.now(LinkValidity.ZONE);
 
             while (true) {
                 // 查出批次已过期的短链
                 List<Link> expiredList = linkMapper.selectList(Wrappers.<Link>lambdaQuery()
                         .eq(Link::getValidType, 1)
-                        .le(Link::getValidEnd, now)
+                        .and(condition -> condition.isNull(Link::getValidEnd)
+                                .or().le(Link::getValidEnd, now))
                         .eq(Link::getDelFlag, 0)
                         .last("LIMIT " + BATCH_SIZE));
 
@@ -77,16 +75,16 @@ public class ExpiredLinkCleanupJob {
                 }
 
                 for (Link link : expiredList) {
-                    // 逻辑删除
-                    link.setDelFlag(1);
-                    linkMapper.updateById(link);
-
-                    // 擦除缓存（L2 Redis & L1 Caffeine 清理）
-                    String cacheKey = "shortlink:goto:" + link.getShortUri();
-                    redis.delete(cacheKey);
+                    // UPDATE 带 short_uri 分片键；命中后统一失效 L1、L2 和空值缓存。
+                    int updated = linkMapper.update(null, Wrappers.<Link>lambdaUpdate()
+                            .eq(Link::getShortUri, link.getShortUri())
+                            .eq(Link::getDelFlag, 0)
+                            .set(Link::getDelFlag, 1));
+                    if (updated > 0) {
+                        queryService.invalidate(link.getShortUri());
+                        totalCleaned += updated;
+                    }
                 }
-
-                totalCleaned += expiredList.size();
                 log.info("已完成 {} 条过期短链的清理与缓存擦除", totalCleaned);
 
                 if (expiredList.size() < BATCH_SIZE) {

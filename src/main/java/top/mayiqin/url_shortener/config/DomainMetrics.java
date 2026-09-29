@@ -71,5 +71,8 @@ public class DomainMetrics {
         Gauge.builder("shortlink.bloom.version", bloomHolder, BloomFilterHolder::version)
                 .description("当前布隆过滤器版本号")
                 .register(registry);
+        Gauge.builder("shortlink.bloom.trusted", bloomHolder, b -> b.isTrusted() ? 1 : 0)
+                .description("当前布隆过滤器已完成全量重建，可以安全拒绝不存在的短码")
+                .register(registry);
     }
 }

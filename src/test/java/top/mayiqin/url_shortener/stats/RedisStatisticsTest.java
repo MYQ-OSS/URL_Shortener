@@ -109,6 +109,23 @@ class RedisStatisticsTest {
         assertTrue(limiter.tryAcquireRedirect("ip", "Ab12Cd"));
         assertFalse(limiter.tryAcquireRedirect("ip", "Ab12Cd"));
     }
+    @Test void cacheVersionPreventsLateReaderFromRestoringDisabledLink() {
+        var write = new DefaultRedisScript<Long>();
+        write.setScriptSource(new ResourceScriptSource(new ClassPathResource("lua/write_link_cache.lua")));
+        write.setResultType(Long.class);
+        var invalidate = new DefaultRedisScript<Long>();
+        invalidate.setScriptSource(new ResourceScriptSource(new ClassPathResource("lua/invalidate_link_cache.lua")));
+        invalidate.setResultType(Long.class);
+        List<String> writeKeys = List.of("link:ver:Ab12Cd", "link:uri:Ab12Cd", "link:null:Ab12Cd");
+        assertEquals(1L, redis.execute(write, writeKeys, "0", "v2-test", "30000"));
+        assertEquals(1L, redis.execute(invalidate, writeKeys, "shortlink:cache:invalidate", "Ab12Cd"));
+        assertNull(redis.opsForValue().get("link:uri:Ab12Cd"));
+        // 请求从 DB 读到旧值的时刻早于失效脚本；迟到的写入必须被版本拒绝。
+        assertEquals(0L, redis.execute(write, writeKeys, "0", "stale-url", "30000"));
+        assertNull(redis.opsForValue().get("link:uri:Ab12Cd"));
+        assertEquals(1L, redis.execute(write, writeKeys, "1", "fresh-url", "30000"));
+        assertEquals("fresh-url", redis.opsForValue().get("link:uri:Ab12Cd"));
+    }
     @Test void committedBatchRetryDoesNotRepeatPvAfterClickUpdateFailure() throws Exception {
         event("one");
         JdbcTemplate jdbc = mock(JdbcTemplate.class);

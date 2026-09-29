@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import top.mayiqin.url_shortener.link.LinkValidity;
 
 /**
  * 短链主表。
@@ -73,13 +74,14 @@ public class Link {
     /** 是否已过期。跳转链路用它决定返回失效页而不是 302。 */
     public boolean expired() {
         return validType != null && validType == 1
-                && validEnd != null && validEnd.isBefore(LocalDateTime.now());
+                && (validEnd == null || !validEnd.isAfter(LocalDateTime.now(LinkValidity.ZONE)));
     }
 
     /** 是否可跳转。 */
     public boolean redirectable() {
         return (enableStatus == null || enableStatus == 0)
                 && (delFlag == null || delFlag == 0)
+                && (validType == null || validType == 0 || validType == 1)
                 && !expired();
     }
 }

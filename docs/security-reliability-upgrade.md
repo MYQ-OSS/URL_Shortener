@@ -52,6 +52,14 @@ shortlink:
 
 ## Redis 故障保护
 
+短链正向缓存现在携带 `validEnd` 截止时间。即使命中 Caffeine 或 Redis，到期时也返回 410；Redis 的实际 TTL 不超过业务有效期。旧版只包含 URL 的缓存会被视为不可信并回源校验。每天的清理任务也改用统一失效方法，删除正确的缓存键。创建接口拒绝非法 `validType`，以及自定义有效期缺失/已过期的 `validEnd`；API 时间按 Asia/Shanghai 解释，并与 MySQL `DATETIME` 一样精确到秒。
+
+启用、禁用时，状态更新和 `LINK_CACHE_INVALIDATE` 本地消息在同一个数据库事务提交。即时 Redis 失效失败时，任务每 5 秒重试，恢复后删除旧 L2 值并广播到各实例。Redis 正常但 Pub/Sub 丢消息时，L1 最多再保留 5 秒；Redis 自身故障时不能承诺固定 5 秒。监控 `shortlink_messages_cache_invalidation_pending` 的持续积压。
+
+状态变更时 Redis 同时推进短码缓存版本并删除旧值；回源写缓存必须在 Lua 脚本中核对其开始时读到的版本。这阻止了“旧 DB 查询结果在禁用清缓存之后才回写 Redis”的竞态。新版本读取旧版纯 URL 缓存时会回源校验，因此上线时无需批量删除旧缓存。
+
+布隆过滤器只有完成全量重建后才具备“确定不存在”的判定资格。如果 Redis 数据丢失或新部署没有重建标记，跳转会跳过 Bloom 的负判定，继续访问空值缓存/数据库；因此不会把历史短码误判成 410，但 DB 回源压力会升高。观察 `/admin/stats` 的 `bloomTrusted` 和 `shortlink_bloom_trusted`；迁移或 Redis 数据恢复后及时调用受管理员 Token 保护的 `/admin/bloom/rebuild`。在重建完成前应按 DB 承载能力限制流量。
+
 故障时限流切换为每实例全局令牌桶，创建 10 QPS、跳转 1000 QPS，耗尽返回 429。不同随机 IP/短码共享兜底预算。查询与限流共用 2 秒故障冷却时间。
 
 所有跳转数据库回源（包括锁竞争失败、压测关闭 L2）受每实例 200 QPS、8 并发限制，超额立即返回 503 + `Retry-After: 1`。数据库异常同样返回 503，不会被误当作 Redis 异常重复查库。L1 热点和降级时的空结果继续缓存在本地。
@@ -59,6 +67,8 @@ shortlink:
 配置位于 `shortlink.fallback`。应按连接池、节点数和压测结果调整：总回源预算是实例数乘以单实例预算；各实例配置不是集群总量限制。
 
 ## 统计持久化与告警
+
+`t_link_goto` 补偿五次失败的消息会进入 `status=2`。管理员通过 `GET /admin/messages/failed` 查看，确认故障已排除后调用 `POST /admin/messages/{shortUri}/{id}/retry` 重置单条消息。重试 SQL 会同时校验消息 ID、分片键、业务类型和失败状态。`shortlink_messages_goto_failed` 非零触发告警。
 
 请求线程将事件写入本地文件、fsync 后原子提交，后台使用持久消息 + mandatory + correlated publisher confirm 投递。ACK 且未被退回后才删文件；NACK、退回、超时、进程重启都保留并重试同一 msgId。确认接口按 Context7 提供的 Spring AMQP 官方文档核对。
 
@@ -74,6 +84,15 @@ shortlink:
 
 ## 测试
 
+需要 Docker 的完整验收可单独运行 `FullWorkflowIT`：它启动独立的 MySQL、Redis、RabbitMQ 容器，执行创建、跳转、过期、禁用恢复、Redis 故障补偿、统计落库及管理员重试。不会连接本机开发数据库。
+
+```powershell
+$env:SHORTLINK_INTEGRATION_TESTS = "true"
+mvn -Dtest=FullWorkflowIT test
+```
+
+无 Docker 时该测试不会作为默认单测运行；正常 `mvn test` 仍运行单测、Web MVC 测试及可选临时 Redis 测试。
+
 ```powershell
 # 不启动业务中间件：单测、MVC 切片与文件重启恢复测试
 mvn test
@@ -83,6 +102,6 @@ $env:SHORTLINK_TEST_REDIS_EXECUTABLE = (Get-Command redis-server).Source
 mvn test
 ```
 
-原有全应用上下文集成测试会连接真实 MySQL/Redis/RabbitMQ，现在仅当 `SHORTLINK_INTEGRATION_TESTS=true` 时启用；运行前需完成数据库迁移、配置 Token 和独立的集成测试环境。默认测试不会连接开发中间件。
+原有连接开发环境的上下文测试仅在 `SHORTLINK_LOCAL_INTEGRATION_TESTS=true` 时启用，避免它与独立容器验收同时运行。默认测试不会连接开发中间件。
 
 Compose 新环境的应用连接凭据需与 Compose 一致，例如使用环境变量 `SPRING_DATASOURCE_PASSWORD=root123`、`SPRING_DATA_REDIS_PASSWORD` 为空、`SPRING_RABBITMQ_USERNAME=admin`、`SPRING_RABBITMQ_PASSWORD=admin123`。生产环境应替换这些本地示例密码。
