@@ -6,21 +6,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
-import top.mayiqin.url_shortener.idgen.SegmentIdGenerator;
 import top.mayiqin.url_shortener.link.entity.Link;
-import top.mayiqin.url_shortener.link.entity.LocalMessage;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
-import top.mayiqin.url_shortener.link.mapper.LocalMessageMapper;
 import top.mayiqin.url_shortener.link.service.LinkCreateService;
 import top.mayiqin.url_shortener.link.service.LinkQueryService;
 import top.mayiqin.url_shortener.link.service.LinkDedupService;
 import top.mayiqin.url_shortener.risk.UrlRiskChecker;
 import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
 
-import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,8 +24,6 @@ import static org.mockito.Mockito.lenient;
 class LinkCreateServiceTest {
 
     @Mock
-    private SegmentIdGenerator idGenerator;
-    @Mock
     private ShortCodeGenerator codeGenerator;
     @Mock
     private LinkMapper linkMapper;
@@ -41,10 +32,6 @@ class LinkCreateServiceTest {
     @Mock
     private UrlRiskChecker riskChecker;
     @Mock
-    private TransactionTemplate tx;
-    @Mock
-    private LocalMessageMapper messageMapper;
-    @Mock
     private LinkDedupService dedupService;
 
     private LinkCreateService linkCreateService;
@@ -52,30 +39,20 @@ class LinkCreateServiceTest {
     @BeforeEach
     void setUp() {
         linkCreateService = new LinkCreateService(
-                idGenerator,
                 codeGenerator,
                 linkMapper,
                 queryService,
                 riskChecker,
-                tx,
-                messageMapper,
                 dedupService,
                 "s.hicode.top"
         );
 
-        // 模拟 TransactionTemplate.executeWithoutResult
-        lenient().doAnswer(invocation -> {
-            Consumer<TransactionStatus> action = invocation.getArgument(0);
-            action.accept(null);
-            return null;
-        }).when(tx).executeWithoutResult(any());
     }
 
     @Test
-    @DisplayName("正常创建短链：完成发号、落库与缓存预热")
+    @DisplayName("正常创建短链：同步落库与缓存预热")
     void testCreateSuccess() {
         when(dedupService.reserve(any())).thenReturn("Ab12Cd");
-        when(idGenerator.nextId()).thenReturn(10086L);
         when(linkMapper.selectOne(any())).thenReturn(null);
 
         String originUrl = "https://example.com/item/123";
@@ -84,7 +61,6 @@ class LinkCreateServiceTest {
         assertEquals("http://s.hicode.top/Ab12Cd", fullUrl);
         verify(riskChecker).check(originUrl);
         verify(linkMapper).insert((Link) any());
-        verify(messageMapper).insert((LocalMessage) any());
         verify(queryService).warmUp("Ab12Cd", originUrl, null);
     }
 
@@ -122,9 +98,31 @@ class LinkCreateServiceTest {
     }
 
     @Test
+    void forceNewRetriesDatabaseCollisionWithAnotherRandomCode() {
+        when(codeGenerator.generate()).thenReturn("Ab12Cd", "New123");
+        doThrow(new org.springframework.dao.DuplicateKeyException("collision"))
+                .doReturn(1).when(linkMapper).insert(any(Link.class));
+        assertEquals("http://s.hicode.top/New123", linkCreateService.create(
+                "https://example.com", "default", true, 0, null, null));
+        verify(codeGenerator, times(2)).generate();
+        verify(queryService).warmUp("New123", "https://example.com", null);
+        verifyNoInteractions(dedupService);
+    }
+
+    @Test
+    void collisionsAreBoundedAndDoNotWarmCache() {
+        when(codeGenerator.generate()).thenReturn("Ab12Cd");
+        doThrow(new org.springframework.dao.DuplicateKeyException("collision"))
+                .when(linkMapper).insert(any(Link.class));
+        assertThrows(IllegalStateException.class, () -> linkCreateService.create(
+                "https://example.com", "default", true, 0, null, null));
+        verify(linkMapper, times(5)).insert(any(Link.class));
+        verifyNoInteractions(queryService);
+    }
+
+    @Test
     void forceNewSkipsCanonicalIndex() {
         when(codeGenerator.generate()).thenReturn("New123");
-        when(idGenerator.nextId()).thenReturn(123L);
         assertEquals("http://s.hicode.top/New123", linkCreateService.create(
                 "https://example.com", "default", true, 0, null, null));
         verifyNoInteractions(dedupService);
@@ -145,13 +143,12 @@ class LinkCreateServiceTest {
         assertEquals("http://s.hicode.top/Winner", linkCreateService.create(
                 "https://example.com", "default", false, 0, null, null));
         verify(dedupService, never()).replace(any(), any());
-        verifyNoInteractions(messageMapper);
     }
 
     @Test
-    void failedTransactionDoesNotWarmCache() {
+    void failedInsertDoesNotWarmCache() {
         when(dedupService.reserve(any())).thenReturn("Ab12Cd");
-        doThrow(new IllegalStateException("database unavailable")).when(messageMapper).insert(any(LocalMessage.class));
+        doThrow(new IllegalStateException("database unavailable")).when(linkMapper).insert(any(Link.class));
         assertThrows(IllegalStateException.class, () -> linkCreateService.create(
                 "https://example.com", "default", false, 0, null, null));
         verifyNoInteractions(queryService);

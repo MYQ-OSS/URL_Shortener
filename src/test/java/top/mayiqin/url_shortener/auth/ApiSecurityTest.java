@@ -41,6 +41,30 @@ class ApiSecurityTest {
                 .andExpect(status().isUnauthorized());
         verifyNoInteractions(manage);
     }
+
+    @Test void localFrontendPreflightIsAllowedWithoutToken() throws Exception {
+        mvc.perform(options("/api/link/list")
+                .header("Origin", "http://127.0.0.1:5173")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://127.0.0.1:5173"))
+                .andExpect(header().string("Access-Control-Allow-Headers", "authorization"));
+        verifyNoInteractions(manage);
+    }
+
+    @Test void corsDoesNotBypassApiAuthenticationAndRejectsUnknownOrigin() throws Exception {
+        mvc.perform(get("/api/link/list").param("gid", "default")
+                .header("Origin", "http://localhost:5173"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"));
+        mvc.perform(options("/api/link/list")
+                .header("Origin", "https://untrusted.example")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "authorization"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+    }
     @Test void tokenCannotSelectAnotherGid() throws Exception {
         mvc.perform(get("/api/link/list").param("gid", "victim").header("Authorization", TOKEN))
                 .andExpect(status().isForbidden());

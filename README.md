@@ -1,108 +1,82 @@
-# 高并发短链接系统
+# 短链接管理项目
 
-> Spring Boot 4.0.7 · Java 21 · MyBatis-Plus · MySQL 8 · Redis 7 (Redisson) · Caffeine · RabbitMQ
->
-> 业务模型极简（短码 → 长链一张表），技术内核完整：发号、抗枚举短码、多级缓存、
-> 防穿透/击穿、热点治理、异步统计、限流、风控。**每一个技术决策都记录在
-> [docs/adr.md](docs/adr.md)——包括放弃了什么、为什么。**
+Spring Boot 4.0.7 / Java 21 / MyBatis-Plus / MySQL / Redis / Caffeine / RabbitMQ / Vue 3。
 
-## 架构总览
+面向实习项目的可运行主版本：创建、分享、跳转、启用/停用、过期管理和访问趋势统计。核心亮点聚焦缓存一致性、异步统计与故障保护，不默认引入分库分表或自研基础设施。
 
-```
- 创建链路（QPS 低，刻意做"重"）
- POST /api/link ─► Bearer认证/归属校验 ─► 限流(gid) ─► 风控 ─► 持久规范短码预约
-      ─► 随机短码 + BF判重（先写 BF 后落库，ADR-004）─► 落库(唯一索引兜底)
-      ─► 预热缓存 ─► 返回（返回即可 302，绝无 404 窗口）
+## 当前架构
 
- 跳转链路（QPS 极高，必须"瘦"）
- GET /{6位短码} ─► 限流(IP+码) ─► Caffeine L1 ─► Redis L2 ─► BloomFilter
-      ─► 空值缓存 ─► 分布式锁+双重检查 ─► MySQL ─► 回写缓存 ─► 302
-      └─► 统计事件本地 fsync ─► 后台 RabbitMQ 确认投递（未确认保留磁盘副本）
-
- 统计链路（最终一致）
- MQ ─► Lua 原子消费（msgId 幂等 + Redis PV/UV/UIP + dirty 集合）
-    ─► 30s 定时任务 ─► 持久待处理批次 ─► MySQL 回执与统计同事务 ─► 幂等点击数
+```text
+创建：认证与归属校验 → 限流 → URL 校验 → 持久规范短码预约 → 主表 INSERT → 缓存预热
+列表：认证与归属校验 → 按 gid 直接读取主表（最多 100 条，创建后立即可读）
+跳转：限流 → 格式校验 → Caffeine → Redis → 空值缓存 → 锁/双重检查 → 受限 DB 回源 → 302
+统计：有界内存队列 → 后台 MQ 确认/重试 → Lua 幂等聚合 → 数据库批次回执与增量同事务
+管理：状态与缓存失效意图同事务 → 原子失效/广播 → Redis 故障后由待办重试
 ```
 
-## 快速启动
+随机六位短码由数据库唯一索引兜底；主键采用 MyBatis-Plus 内置策略。多级缓存命中时仍检查有效期，回写时使用版本栅栏。
 
-**安全升级后的启动前置条件**：先按 [安全与可靠性升级](docs/security-reliability-upgrade.md) 迁移新增索引/统计回执表，并设置 `SHORTLINK_ADMIN_TOKEN`、`SHORTLINK_API_TOKEN`（独立随机值，均至少 32 字符）。`/api/**` 现在要求 Bearer Token，`/admin/**` 只接受 `X-Admin-Token`；缺失配置会拒绝启动。
+统计用于趋势展示，队列满或进程崩溃允许丢失事件，不保证全链路无损，不适用于计费或审计。默认容量 4096，包含正在等待 MQ 确认的事件；监控展示积压、明确丢弃和投递失败次数。
 
-### 方式 A：Docker（推荐，可复现压测环境）
+## 启动
 
-```bash
-docker compose up -d          # MySQL 8 / Redis 7 / RabbitMQ，schema 自动执行
-mvn spring-boot:run
+先在单库导入 `sql/schema.sql`。已有单库或分片数据请先阅读 [精简与切换说明](docs/simplification.md)，不要直接覆盖、删除旧数据库。
+
+必须通过环境变量提供两个独立随机 Token（均至少 32 字符）：`SHORTLINK_API_TOKEN`、`SHORTLINK_ADMIN_TOKEN`。默认 API Token 绑定 `gid=default`，前端构建不注入 Token。
+
+本地已有中间件时，在未跟踪的 `application-local.yaml` 中配置 MySQL、Redis 和 RabbitMQ：
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.profiles=local"
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
 
-### 方式 B：本机已有 MySQL/Redis
+浏览器打开 `http://127.0.0.1:5173/app/`，默认进入明确标注的演示空间。在「连接设置」填入 gid/API Token 后连接真实服务；“服务地址”留空使用 Vite 代理到本机 8080。管理员 Token 只用于运行观察和维护。凭据仅保存在页面内存。
 
-复制一份 `src/main/resources/application-local.yaml`（已 gitignore，含本机密码），
-按需改数据源，然后：
+也可先 `docker compose up -d` 启动三种中间件。新 MySQL 卷自动执行单库初始化脚本；已有卷不会自动更新。应用连接参数需与 Compose 一致，通过 `SPRING_DATASOURCE_*`、`SPRING_DATA_REDIS_*`、`SPRING_RABBITMQ_*` 配置，不能直接沿用其他本机配置的示例密码。
 
-```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=local
+让后端同时提供页面：
+
+```powershell
+npm --prefix frontend run build:backend
+mvn package -DskipTests
+java -jar target/URL_Shortener-0.0.1-SNAPSHOT.jar
 ```
 
-RabbitMQ 缺席时统计事件保留在本地持久目录，恢复后确认补投（`/admin/stats` 里 `stats.pending` 会增长）。目录必须放在持久卷，详情见升级文档。
+访问 `/app/`；Dockerfile 也会构建并打包前端。直连其他后端源时配置 `SHORTLINK_CORS_ORIGINS` 后重启，正式请求仍需 Token。详情见 [前端说明](frontend/README.md)。
 
-## 接口速览
+本机私有配置不会进入分发 JAR。运行 JAR 需要私有配置时，将文件保存在外部目录并使用 `--spring.config.additional-location=file:./config/` 和 `--spring.profiles.active=local`，或通过环境变量配置连接。
 
-| 接口 | 说明 |
+## 接口
+
+| 接口 | 用途 |
 |---|---|
-| `POST /api/link` | 创建短链。`{originUrl, gid, forceNew?, validType?, validEnd?, describe?}`；默认按 (gid, url_hash) 幂等，`forceNew=true` 强制新码（渠道归因） |
-| `GET /{shortUri}` | 302 跳转；不存在/禁用/过期 → 410 |
-| `POST /api/link/{uri}/disable` / `enable` | 禁用/恢复：状态与失效消息同事务；Redis 正常但广播丢失时 L1 最多保留 5s，Redis 故障后会补偿清理 L2 |
-| `GET /admin/messages/failed` | 查看达到重试上限的 gid 索引消息 |
-| `POST /admin/messages/{uri}/{id}/retry` | 排除故障后将指定消息重新入队 |
-| `POST /admin/bloom/rebuild` | 双 BF 滚动重建（压测灌数后必调，ADR-013） |
-| `POST /admin/cache/local/clear` | 清本地缓存（每轮压测前调） |
-| `GET /admin/stats` | L1 命中率 / 发号器水位 / BF 版本 / 统计链路健康度 |
-| `GET /actuator/prometheus` | Micrometer 指标 |
+| `POST /api/link` | 创建；同 gid/URL 默认复用规范短码，`forceNew=true` 强制新码 |
+| `GET /api/link/list?gid=default&limit=100` | 从主表读取当前身份的链接 |
+| `GET /{6位短码}` | 有效时 302，不存在/禁用/过期时 410 |
+| `POST /api/link/{code}/disable`、`enable` | 校验归属与风控状态后停用/恢复 |
+| `GET /admin/stats` | 本地缓存、统计内存队列及落库水位 |
+| `POST /admin/cache/local/clear` | 清当前实例的本地缓存 |
+| `POST /admin/expired/clean` | 逻辑删除过期链接并失效缓存 |
+| `POST /admin/risk/reload` | 选择性更新域名黑白名单 |
+| `GET /actuator/prometheus` | 受管理员凭据保护的监控指标 |
 
-## 已验证（2026-07-26 冒烟 + 2026-08-03/04 压测/统计/故障演练实测）
+API 使用 `Authorization: Bearer <token>`；管理接口使用 `X-Admin-Token`。禁用后其他实例的 L1 由广播失效，漏收时最多保留本地 TTL；Redis 故障期间的 L2 清理由持久待办恢复后补偿，不能承诺固定秒数。
 
-- ✅ `mvn compile` + 17 个纯逻辑单测全绿（Base62 / Feistel / 发号器 1000 线程并发 / 号段存储）
-- ✅ 端到端：创建 → 302；幂等同码；forceNew 新码；内网 URL 风控 400；
-  不存在短码 410（BF 拦截）；非法格式 404；disable → 410 → enable → 302
-- ✅ **Week 2 压测数据已采集**（Zipf α=1.0，100 万数据，k6 200VU）：
-  裸 MySQL 10,640 → +Caffeine L1 **16,117 QPS（+51%）**，P50 16.3→8.6ms，
-  L1 命中率 63.7%（整体命中率 ~100%）。数据与归因见 [benchmark/results/baseline.md](benchmark/results/baseline.md)
-- ✅ **Week 3 统计链路运行时验证**：PV 对账误差 **0.00%**（10,000 次跳转精确落库，
-  日汇总=小时合计=click_num）；MQ 宕机→缓冲→恢复→补投全链路无损
-- ✅ **Week 4 分库分表接入**：t_link 按 short_uri 分 2 库 × 8 表，t_link_goto 按 gid 分片，
-  本地消息表同库事务双写。sql-show 实测跳转/创建/列表**全程零广播**；
-  100 万存量数据纯 SQL 迁移后逐分片校验一致（ADR-024）
-- ✅ **Week 5 故障演练实测**（ADR-015）：MQ 宕机跳转不受影响（修复前 155 QPS 阻塞 bug
-  由压测抓出 → 异步 publisher + 熔断）；Redis 宕机**错误率 0%**（降级直查 DB）；
-  MySQL 宕机热数据 **98.96% 可用**（数据不可变 + 30 天 TTL 缓存兜底）
-- ✅ **Week 5 统计异步批量投递**（ADR-023）：完整形态 QPS **1,185 → 12,831（10.8x）**，
-  常规负载统计无损（300 次跳转 → pv 精确 300）
-- ✅ **Week 5 可观测 + 风控**：Prometheus 域指标 9 项（L1 命中率/淘汰/统计 pending/dropped/
-  发号器水位/BF 版本）；域名黑白名单（后缀匹配，子域名换皮不误伤，已实测）
-- ✅ ShardingSphere 5.5.3 x Boot 4 冒烟通过：按分片键单表路由 / 按 gid 广播 8 表的
-  对照日志齐全；**薄驱动需手动引 7 个模块**（ADR-017，模块清单在 pom.xml 注释里）
-- 🐛 **压测实测发现并修复 8 个真 bug**（全部固化进 ADR-019~024）：
-  ①创建链路连接池自饿（5→1305 QPS）②MQ 宕机阻塞请求线程（异步化+熔断）
-  ③short_uri collation 大小写碰撞 ④commons-pool2 缺失致 Lettuce 池化失效
-  ⑤统计落库 upsert 列二义 ⑥每请求同步 publish 瓶颈（1,185→12,831 QPS）
-  ⑦Redis 宕机无降级路径 ⑧ShardingSphere 单表不自动路由（!SINGLE 规则）
-- 🐛 早期实测发现并修复：幂等唯一索引与 forceNew 互斥（降级为普通索引，ADR-018）；
-  catch-all 异常处理吞掉 404 语义（显式放行 NoResourceFoundException）
+## 验证与文档
 
-## 进度（5 周排期见 [docs/方案评审与重构.md](docs/方案评审与重构.md) Part 6）
+```powershell
+mvn clean test
+npm --prefix frontend run test
+npm --prefix frontend run build
+npm --prefix frontend run test:e2e
+```
 
-- [x] Week 1：环境 + 发号器 + 短码 + 创建/跳转链路 + 冒烟
-- [x] Week 2 代码 + **压测数据**：多级缓存 / BF 防穿透 / 分布式锁 / 限流
-- [x] Week 3：统计链路（MQ 投递 + 消费 + 定时落库）**运行时验证通过（PV 误差 0%）**
-- [x] Week 4：**ShardingSphere 2 库 × 8 表接入 + 异构索引表双写 + 本地消息表**（验收零广播，ADR-024）
-- [x] Week 5：**故障演练三类宕机实测 + Prometheus 域指标 + 风控黑白名单 + 统计异步投递**（ADR-015/023）
+真实 MySQL/Redis/RabbitMQ 的独立容器验收：设置 `SHORTLINK_INTEGRATION_TESTS=true`，再执行 `mvn -Dtest=FullWorkflowIT test`，需要可用 Docker。默认单测不等于真实中间件验收。
 
-## 文档
-
-| 文档 | 内容 |
-|---|---|
-| [docs/adr.md](docs/adr.md) | 22 条架构决策记录：每条都有"考虑过的方案/放弃了什么/数据依据" |
-| [docs/方案评审与重构.md](docs/方案评审与重构.md) | 完整方案评审、5 周排期、简历写法、37 道击穿题 |
-| [docs/day1-smoke-test.md](docs/day1-smoke-test.md) | Day 1 检查清单 |
-| [benchmark/](benchmark/) | Zipf 压测脚本（k6/wrk）、种子数据生成、命中率理论计算、结果（baseline.md） |
+- [项目结构树](docs/项目结构树.md)：当前主版本目录与职责。
+- [安全与可靠性说明](docs/security-reliability-upgrade.md)：鉴权、缓存与统计边界。
+- [精简与切换说明](docs/simplification.md)：本次取舍、旧表兼容和部署检查。
+- [历史实验](experiments/README.md)：分片、号段、数值编码，均不参与默认构建。
+- [历史 ADR](docs/adr.md)、[历史压测](benchmark/results/baseline.md)：保留原实验记录，不作为当前版本性能或无损承诺。

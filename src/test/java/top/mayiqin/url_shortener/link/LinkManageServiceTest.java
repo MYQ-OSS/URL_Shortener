@@ -1,6 +1,7 @@
 package top.mayiqin.url_shortener.link;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import top.mayiqin.url_shortener.link.entity.Link;
@@ -16,6 +17,39 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class LinkManageServiceTest {
+    @Test @SuppressWarnings({"rawtypes", "unchecked"})
+    void listReadsMainTableWithExactOwnerAndBoundedLimit() {
+        MapperMetadata.initialize(Link.class);
+        LinkMapper mapper = mock(LinkMapper.class);
+        Link link = new Link();
+        link.setShortUri("Ab12Cd");
+        when(mapper.selectList(any())).thenReturn(java.util.List.of(link));
+        var service = new LinkManageService(mapper, mock(LinkQueryService.class),
+                mock(LocalMessageMapper.class), mock(TransactionTemplate.class));
+        assertEquals(java.util.List.of(link), service.listByGid("Owner", 1000));
+        var wrapper = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(mapper).selectList(wrapper.capture());
+        String sql = wrapper.getValue().getSqlSegment();
+        assertTrue(sql.contains("CAST(gid AS BINARY)"));
+        assertTrue(sql.contains("del_flag"));
+        assertTrue(sql.contains("ORDER BY id DESC"));
+        assertTrue(sql.endsWith("LIMIT 100"));
+        assertTrue(wrapper.getValue().getParamNameValuePairs().containsValue("Owner"));
+        assertFalse(sql.contains("short_uri IN"));
+    }
+
+    @Test @SuppressWarnings({"rawtypes", "unchecked"})
+    void listClampsNonPositiveLimitToOne() {
+        MapperMetadata.initialize(Link.class);
+        LinkMapper mapper = mock(LinkMapper.class);
+        var service = new LinkManageService(mapper, mock(LinkQueryService.class),
+                mock(LocalMessageMapper.class), mock(TransactionTemplate.class));
+        service.listByGid("owner", 0);
+        var wrapper = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(mapper).selectList(wrapper.capture());
+        assertTrue(wrapper.getValue().getSqlSegment().endsWith("LIMIT 1"));
+    }
+
     @SuppressWarnings("unchecked")
     private TransactionTemplate immediateTransaction() {
         TransactionTemplate tx = mock(TransactionTemplate.class);
@@ -30,7 +64,7 @@ class LinkManageServiceTest {
         LinkMapper mapper = mock(LinkMapper.class);
         LocalMessageMapper messages = mock(LocalMessageMapper.class);
         LinkQueryService query = mock(LinkQueryService.class);
-        var service = new LinkManageService(mapper, mock(LinkGotoMapper.class), query,
+        var service = new LinkManageService(mapper, query,
                 messages, immediateTransaction());
         when(mapper.update(isNull(), any())).thenReturn(1);
         when(query.invalidate("Ab12Cd")).thenReturn(true);
@@ -50,7 +84,7 @@ class LinkManageServiceTest {
     @Test void missingOrUnauthorizedLinkDoesNotInvalidateCaches() {
         var query = mock(LinkQueryService.class);
         var messages = mock(LocalMessageMapper.class);
-        var service = new LinkManageService(mock(LinkMapper.class), mock(LinkGotoMapper.class), query,
+        var service = new LinkManageService(mock(LinkMapper.class), query,
                 messages, immediateTransaction());
         assertFalse(service.updateStatus("Ab12Cd", "attacker", 0));
         verifyNoInteractions(query);
@@ -63,7 +97,7 @@ class LinkManageServiceTest {
         LinkQueryService query = mock(LinkQueryService.class);
         when(mapper.update(isNull(), any())).thenReturn(1);
         when(query.invalidate("Ab12Cd")).thenReturn(false);
-        var service = new LinkManageService(mapper, mock(LinkGotoMapper.class), query,
+        var service = new LinkManageService(mapper, query,
                 messages, immediateTransaction());
         assertTrue(service.updateStatus("Ab12Cd", "owner", 1));
         verify(messages).insert(any(LocalMessage.class));
@@ -76,7 +110,7 @@ class LinkManageServiceTest {
         LinkQueryService query = mock(LinkQueryService.class);
         when(mapper.update(isNull(), any())).thenReturn(1);
         when(messages.insert(any(LocalMessage.class))).thenThrow(new IllegalStateException("message table down"));
-        var service = new LinkManageService(mapper, mock(LinkGotoMapper.class), query,
+        var service = new LinkManageService(mapper, query,
                 messages, immediateTransaction());
         assertThrows(IllegalStateException.class, () -> service.updateStatus("Ab12Cd", "owner", 1));
         verifyNoInteractions(query);

@@ -34,7 +34,7 @@ build/
 ### 本地临时中间件实例（Docker 不可用时的替代，数据可随时删除重建） ###
 .localdev/
 
-# 持久统计待投递事件，每个应用实例独占目录
+# 历史统计 outbox 数据，升级前需排空；新主版本不读取，也不会自动删除。
 data/stats-outbox/
 
 ### 本地环境私有配置（含本机数据库密码，不入库） ###
@@ -43,3 +43,12 @@ src/main/resources/application-local.yaml
 ### 仓库自身的临时快照压缩包 ###
 _*.zip
 src/main/resources/sharding-local.yaml
+
+# Vue 工作台依赖、构建与浏览器测试产物
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.env.local
+benchmark/__pycache__/
+src/main/resources/static/app/

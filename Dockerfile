@@ -2,7 +2,15 @@
 # 高并发短链接系统 (URL_Shortener) - 多阶段 Docker 构建镜像
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── 阶段 1: 编译打包 ─────────────────────────────────────────────────────────
+# ── 阶段 1: 构建 Vue 工作台 ────────────────────────────────────────────────
+FROM node:24-alpine AS frontend-builder
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
+# ── 阶段 2: 编译打包 ─────────────────────────────────────────────────────────
 FROM maven:3.9.6-eclipse-temurin-21-alpine AS builder
 WORKDIR /app
 
@@ -12,9 +20,11 @@ RUN mvn dependency:go-offline -B
 
 # 拷贝源码并打包 (跳过单元测试加快镜像构建速度)
 COPY src ./src
+COPY sql ./sql
+COPY --from=frontend-builder /frontend/dist ./src/main/resources/static/app
 RUN mvn package -DskipTests -B
 
-# ── 阶段 2: 运行时轻量镜像 ──────────────────────────────────────────────────
+# ── 阶段 3: 运行时轻量镜像 ──────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 

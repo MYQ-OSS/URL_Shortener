@@ -57,8 +57,8 @@ end
 
 -- 统计各状态码。302 之外的都是问题：
 --   410 -> 短码不存在/已失效。如果大面积出现，说明 seed 数据和请求日志不匹配，
---          或者忘了重建布隆过滤器（curl -X POST /admin/bloom/rebuild）
---   429 -> 被限流打到了。压测时应把 shortlink.rate-limit.redirect 调大或临时关掉，
+--          或链接已禁用/过期，需检查测试库主表记录
+--   429 -> 被限流打到了。压测时应把 shortlink.rate-limit.redirect 容量与速率调大，
 --          否则你测的是限流器的吞吐而不是跳转链路的吞吐
 --   5xx -> 真问题
 local status = {}
@@ -84,7 +84,7 @@ function done(summary, latency, requests)
    if status[302] == nil or status[302] / total < 0.95 then
       io.write("\n  !! 302 占比低于 95%，这次压测数据不可用。检查：\n")
       io.write("     1. seed 数据是否灌进去了\n")
-      io.write("     2. 是否重建了布隆过滤器 curl -X POST /admin/bloom/rebuild\n")
+      io.write("     2. 主表记录是否有效、连接的是否为预期测试库\n")
       io.write("     3. 限流是否把请求挡了（看 429 数量）\n")
    end
 end

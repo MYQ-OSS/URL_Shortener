@@ -1,0 +1,14 @@
+.git
+.idea
+.codegraph
+.localdev
+target
+data
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/.env.local
+src/main/resources/application-local.yaml
+src/main/resources/sharding-local.yaml
+experiments/

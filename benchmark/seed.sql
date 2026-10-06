@@ -14,12 +14,10 @@
 --     生产短码走 ShortCodeGenerator 的随机方案（模乘置换会被两次 API 调用反解，
 --     见 ADR-003）；测试数据不需要抗枚举，用它完全没问题。
 --
---  2. ★ seed 完必须重建布隆过滤器，否则压测请求全部 404，你测的是 BF 的拒绝速度：
---        curl -X POST http://localhost:8080/admin/bloom/rebuild
---     这个坑非常隐蔽——QPS 会高得离谱（因为根本没查缓存和 DB），很容易误以为优化成功。
+--  2. 只在独立测试库执行；主版本没有 Bloom 和号段维护前置条件。
 --
---  3. 这里的短码生成规则必须与 Java Base62Codec 和 benchmark/seedcode.py 三处一致。
---     已交叉校验通过（5000 个短码完全一致）。改任何一处都要同步改另外两处。
+--  3. 这里的短码生成规则必须与 历史编码实验与 benchmark/seedcode.py 一致。
+--     已交叉校验通过（5000 个短码完全一致）。修改 SQL 规则时需同时修改 Python 请求生成规则。
 -- ════════════════════════════════════════════════════════════════════════════
 
 SET @total_rows = 1000000;      -- 想要 1000 万就改成 10000000
@@ -136,8 +134,7 @@ SELECT COUNT(*) AS 总行数, COUNT(DISTINCT short_uri) AS 唯一短码数 FROM 
 -- （已与 Java Base62Codec 和 benchmark/seedcode.py 交叉校验过）
 SELECT id, short_uri, gid, origin_url FROM t_link ORDER BY id LIMIT 5;
 
--- 把号段表推到种子数据之后，避免后续创建的短链主键与种子冲突
-UPDATE t_id_segment SET max_id = GREATEST(max_id, @total_rows + 1000) WHERE biz_tag = 'short_link';
+-- 新业务主键采用内置 ASSIGN_ID，不需要修改历史号段表。
 
 DROP TABLE IF EXISTS t_seq_10k;
 DROP PROCEDURE IF EXISTS sp_seed_links;

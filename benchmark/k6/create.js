@@ -2,12 +2,8 @@
 //
 //   ~/bin/k6 run -e VUS=50 -e DURATION=30s benchmark/k6/create.js
 //
-// ⚠️ 创建接口的并发要开小（50 而不是 200）。理由不是它扛不住，
-// 而是短链的读写比是 1:500 —— 用跳转的并发量去压创建，测的是一个不存在的场景。
-// 真实的创建 QPS 大概在几百到几千，把它压到几万没有参考价值。
-//
-// 压测时限流必须关闭（shortlink.rate-limit.enabled=false），
-// 否则创建默认 10 QPS/gid，绝大部分请求会变成 429。
+// 根据目标流量从低并发开始，只对隔离测试环境加压。
+// 通过 shortlink.rate-limit.create.capacity/refill-per-sec 调整限额，没有 enabled 总开关。
 
 import http from 'k6/http';
 import { vu } from 'k6/execution';
@@ -34,7 +30,7 @@ let counter = 0;
 
 export default function () {
     counter++;
-    // forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（发号 + 生成短码 + 落库）。
+    // forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（随机短码 + 落库）。
     // 不加这个的话第二次起就命中幂等直接返回，测的是查询而不是创建。
     const body = JSON.stringify({
         originUrl: `https://example.com/bench/${vu.idInTest}-${counter}-${Date.now()}`,
@@ -67,7 +63,6 @@ export function handleSummary(data) {
     out += `  other: ${cnt('st_other')}\n`;
     out += `\n  创建 QPS : ${Math.round(data.metrics.http_reqs.values.rate)}\n`;
     if (d) out += `  P99      : ${d['p(99)'].toFixed(2)} ms\n`;
-    out += '\n  对照检查：看 /admin/stats 里发号器的 syncLoadCount。\n';
-    out += '  它持续增长说明 step 太小、预加载赶不上消耗（见 ADR-002）。\n';
+    out += '\n  对照检查：连接池、错误率和 /admin/stats 的统计队列水位。\n';
     return { stdout: out };
 }

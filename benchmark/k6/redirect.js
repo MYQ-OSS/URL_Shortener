@@ -33,8 +33,8 @@ const codes = new SharedArray('codes', function () {
 // ── 状态码分布（对应 lua 版的 response/done 统计）──────────────────
 // 302 之外的都是问题：
 //   410 -> 短码不存在/已失效。大面积出现 = seed 数据和请求日志不匹配，
-//          或者忘了重建布隆过滤器（POST /admin/bloom/rebuild）
-//   429 -> 被限流打到了。压测时应关闭 shortlink.rate-limit.enabled
+//          或者链接已禁用/过期，需检查目标库的主表记录
+//   429 -> 被限流打到了。隔离压测时可提高 shortlink.rate-limit.redirect 的容量与补充速率
 //   5xx -> 真问题
 const st302 = new Counter('st_302');
 const st404 = new Counter('st_404');
@@ -115,7 +115,7 @@ export function handleSummary(data) {
     if (ratio302 < 0.95) {
         out += '\n  !! 302 占比低于 95%，这次压测数据不可用。检查：\n';
         out += '     1. seed 数据是否灌进去了\n';
-        out += '     2. 是否重建了布隆过滤器 curl -X POST /admin/bloom/rebuild\n';
+        out += '     2. 主表记录是否有效、连接的是否为预期测试库\n';
         out += '     3. 限流是否把请求挡了（看 429 数量）\n';
     }
     return { stdout: out };

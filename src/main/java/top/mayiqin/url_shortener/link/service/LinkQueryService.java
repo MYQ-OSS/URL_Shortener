@@ -10,48 +10,18 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
-import top.mayiqin.url_shortener.common.Base62Codec;
+import top.mayiqin.url_shortener.common.ShortCodeFormat;
 import top.mayiqin.url_shortener.common.RedisAvailability;
 import org.springframework.web.server.ResponseStatusException;
 import top.mayiqin.url_shortener.link.entity.Link;
 import top.mayiqin.url_shortener.link.mapper.LinkMapper;
-import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-/**
- * 跳转链路：短码 → 长链。
- *
- * <p><b>这是整个系统 QPS 最高的路径，必须"瘦"到极致。</b>
- * 它刻意不走 Spring Security 过滤器链、不开事务、不打同步 INFO 日志、
- * 缓存里存紧凑的 URL + 截止时间字符串，命中后仍能精确判断到期。
- *
- * <h3>完整防护链（顺序有讲究，每一步的位置都要能解释）</h3>
- * <pre>
- *  0. 格式校验        长度/字符非法 → 直接 404，不查任何存储。成本最低的一道防线
- *  1. Caffeine L1     命中就完全不走网络（~100ns）
- *  2. Redis L2        分布式共享（~0.5ms，1 次 RT）
- *  3. BloomFilter     拦"从来不存在"的短码 → 防穿透。必须在查 DB 之前
- *  4. 空值缓存        拦"BF 假阳性"和"曾存在但已删除"的短码
- *  5. 分布式锁        防击穿：热点 key 过期瞬间只放 1 个请求进 DB
- *  6. 双重检查        拿到锁后再查一次缓存——前面排队的请求可能已经回写了
- *  7. MySQL           最后一道
- *  8. 回写 L2 + L1    不存在也要写空值缓存
- * </pre>
- *
- * <h3>为什么"布隆过滤器"和"空值缓存"两个都要？（高频击穿题）</h3>
- * <ul>
- *   <li>BF 有<b>假阳性</b>：判断"可能存在"的短码里有一部分其实不存在 →
- *       会穿透到 DB → 需要空值缓存兜住</li>
- *   <li>BF <b>不支持删除</b>：已删除的短链在 BF 里还是"存在" → 也需要空值缓存</li>
- *   <li>反过来光有空值缓存不够：攻击者构造<b>海量不同的</b>随机短码，
- *       每个都要先查一次 DB 才能建立空值缓存，DB 还是会被打穿 → 需要 BF 在前面挡住</li>
- * </ul>
- * <b>两者是互补的：BF 挡掉 99.99% 不存在的请求，空值缓存兜住漏过来的那部分。</b>
- */
+/** 多级缓存、空值缓存和受限回源；过期判断及版本栅栏保护仍在缓存命中、回写时执行。 */
 @Slf4j
 @Service
 public class LinkQueryService {
@@ -77,7 +47,6 @@ public class LinkQueryService {
     private final Cache<String, String> localCache;
     private final StringRedisTemplate redis;
     private final RedissonClient redisson;
-    private final ShortCodeGenerator codeGenerator;
     private final LinkMapper linkMapper;
     private final DbReadGuard dbGuard;
     private final RedisAvailability redisAvailability;
@@ -99,7 +68,6 @@ public class LinkQueryService {
     public LinkQueryService(Cache<String, String> localCache,
                             StringRedisTemplate redis,
                             RedissonClient redisson,
-                            ShortCodeGenerator codeGenerator,
                             LinkMapper linkMapper,
                             DbReadGuard dbGuard,
                             RedisAvailability redisAvailability,
@@ -108,7 +76,6 @@ public class LinkQueryService {
         this.localCache = localCache;
         this.redis = redis;
         this.redisson = redisson;
-        this.codeGenerator = codeGenerator;
         this.linkMapper = linkMapper;
         this.dbGuard = dbGuard;
         this.redisAvailability = redisAvailability;
@@ -121,7 +88,7 @@ public class LinkQueryService {
         this.l1Enabled = l1Enabled;
         this.l2Enabled = l2Enabled;
         if (!l1Enabled || !l2Enabled) {
-            log.warn("缓存开关非默认状态（l1={}, l2={}）——仅限压测使用，生产必须全开", l1Enabled, l2Enabled);
+            log.warn("缓存开关非默认状态（l1={}, l2={}）——仅限压测使用，请根据压测目的确认此配置", l1Enabled, l2Enabled);
         }
     }
 
@@ -132,7 +99,7 @@ public class LinkQueryService {
      */
     public String resolve(String shortUri) {
         // ── 0. 格式校验：不查任何存储 ────────────────────────────────
-        if (!Base62Codec.isWellFormed(shortUri)) {
+        if (!ShortCodeFormat.isWellFormed(shortUri)) {
             return null;
         }
 
@@ -149,7 +116,7 @@ public class LinkQueryService {
         }
 
         if (!l2Enabled || redisAvailability.isOpen()) {
-            // 压测阶段开关：绕过全部 Redis 链路（L2 / BF / 空值缓存 / 锁），直查 DB
+            // 压测开关或 Redis 故障时，直查 DB；回源预算仍然有效。
             return fallback(shortUri);
         }
 
@@ -159,7 +126,7 @@ public class LinkQueryService {
             throw e;
         } catch (RuntimeException e) {
             // ── Redis 故障降级（ADR-015 故障降级矩阵）──────────────────
-            // L2/BF/锁全在 Redis 上，任何一个调用抛异常都说明 Redis 不可用。
+            // L2 和锁共用 Redis；故障时进入有预算保护的 DB 降级路径。
             // 跳过 Redis 链后受本地回源预算保护；超额返回 503，避免故障扩散到 DB。
             redisAvailability.failed();
             redisDownWarn(e);
@@ -167,7 +134,7 @@ public class LinkQueryService {
         }
     }
 
-    /** L2 → BF → 空值缓存 → 锁 → 回源 → 回写。Redis 故障时由调用方捕获降级。 */
+    /** L2 → 空值缓存 → 锁 → 回源 → 回写。Redis 故障时由调用方捕获降级。 */
     private String resolveViaRedis(String shortUri) {
         // ── 2. L2 Redis ───────────────────────────────────────────
         String cached = redis.opsForValue().get(KEY_LINK + shortUri);
@@ -179,12 +146,6 @@ public class LinkQueryService {
             }
             // 滚动升级时不能继续信任旧版不带截止时间的 URL 缓存。
             redis.delete(KEY_LINK + shortUri);
-        }
-
-        // ── 3. 布隆过滤器：false 表示一定不存在 ──────────────────────
-        if (!codeGenerator.mightExist(shortUri)) {
-            putLocal(shortUri, "");
-            return null;
         }
 
         // ── 4. 空值缓存 ────────────────────────────────────────────
@@ -242,7 +203,7 @@ public class LinkQueryService {
         long now = System.currentTimeMillis();
         long last = lastRedisWarnAt.get();
         if (now - last > 5000 && lastRedisWarnAt.compareAndSet(last, now)) {
-            log.warn("Redis 故障，跳转链路降级为直查 DB（L2/BF/锁暂不可用）: {}", e.getMessage());
+            log.warn("Redis 故障，跳转链路降级为受限 DB 回源（L2/锁暂不可用）: {}", e.getMessage());
         }
     }
 
@@ -283,22 +244,7 @@ public class LinkQueryService {
         return saved == 1L;
     }
 
-    /**
-     * 失效一个短码的所有层级缓存。
-     *
-     * <p>调用方：禁用/封禁/删除/修改目标地址。
-     *
-     * <p><b>⚠️ 本地缓存的失效是这里最难的部分。</b>Redis 好清（DEL），
-     * 但每个实例的 Caffeine 是各自独立的，必须靠 Redis Pub/Sub 广播。
-     * 而 Pub/Sub 是 fire-and-forget <b>不保证送达</b>（实例正好在重连时会漏消息），
-     * 所以 Caffeine 必须<b>同时</b>设短 TTL 作为第二层保险：
-     * <ul>
-     *   <li>广播：让 99% 的情况下 100ms 内生效</li>
-     *   <li>Redis 正常但广播丢失：短 TTL 最多保留旧 L1 5 秒</li>
-     *   <li>Redis 故障导致 DEL 失败：本地消息恢复后重试</li>
-     * </ul>
-     * 两层各解决一半问题。见 {@code CacheInvalidateListener}。
-     */
+    /** 提升缓存版本后原子删除 L2 并广播；L1 短 TTL 兜底漏收广播的实例。 */
     public boolean invalidate(String shortUri) {
         boolean cleared = true;
         if (l2Enabled) {

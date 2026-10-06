@@ -56,7 +56,7 @@ def main():
     with open(a.out, 'w', encoding='utf-8') as f:
         for i in range(a.requests):
             if a.miss_ratio > 0 and random.random() < a.miss_ratio:
-                # 取一个远超种子范围的 row，其短码一定不在库里 -> 走 BF/空值缓存路径
+                # 取一个远超种子范围的 row，其短码一定不在库里 -> 走空值缓存与受限回源路径
                 f.write(short_uri(a.rows + 1 + random.randrange(10 ** 9)) + '\n')
                 n_miss += 1
             else:
@@ -66,10 +66,9 @@ def main():
                 print(f"  {i + 1:,} / {a.requests:,}")
 
     print(f"完成。其中不存在的短码 {n_miss:,} 条（{n_miss / a.requests * 100:.2f}%）")
-    print(f"\n⚠️ 记住两件事：")
-    print(f"   1. seed 完数据后必须重建布隆过滤器，否则全部 404 —— ")
-    print(f"      POST http://localhost:8080/admin/bloom/rebuild")
-    print(f"   2. 优化前后必须用同一个 --seed 和同一份 requests.txt，否则数据不可比")
+    print("\n注意：")
+    print("   1. 主版本没有 Bloom；确认 seed 数据与请求日志使用同一个独立数据库")
+    print("   2. 优化前后使用同一个 --seed 和请求日志，同时记录限流与 DB 回源预算")
 
 
 if __name__ == '__main__':

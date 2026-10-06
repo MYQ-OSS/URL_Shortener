@@ -16,7 +16,6 @@ import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 import top.mayiqin.url_shortener.link.service.DbReadGuard;
 import top.mayiqin.url_shortener.link.service.CachedLink;
 import top.mayiqin.url_shortener.link.service.LinkQueryService;
-import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
 import java.util.concurrent.TimeUnit;
 import java.time.LocalDateTime;
 import top.mayiqin.url_shortener.link.LinkValidity;
@@ -29,7 +28,6 @@ class LinkQueryServiceTest {
     StringRedisTemplate redis;
     ValueOperations<String, String> values;
     RedissonClient redisson;
-    ShortCodeGenerator codes;
     LinkMapper mapper;
     LinkQueryService query;
     @BeforeEach @SuppressWarnings("unchecked") void setup() {
@@ -38,9 +36,8 @@ class LinkQueryServiceTest {
         values = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
         redisson = mock(RedissonClient.class);
-        codes = mock(ShortCodeGenerator.class);
         mapper = mock(LinkMapper.class);
-        query = new LinkQueryService(local, redis, redisson, codes, mapper,
+        query = new LinkQueryService(local, redis, redisson, mapper,
                 new DbReadGuard(2, 100), new RedisAvailability(), true, true);
     }
     @Test void localHitDoesNotUseRedisOrDatabase() {
@@ -56,7 +53,6 @@ class LinkQueryServiceTest {
         verify(values, times(1)).get(anyString());
     }
     @Test void databaseFailureDoesNotCauseSecondSqlAttempt() throws Exception {
-        when(codes.mightExist("Ab12Cd")).thenReturn(true);
         RLock lock = mock(RLock.class);
         when(redisson.getLock(anyString())).thenReturn(lock);
         when(lock.tryLock(500, 3000, TimeUnit.MILLISECONDS)).thenReturn(true);
@@ -65,8 +61,8 @@ class LinkQueryServiceTest {
         assertEquals(503, error.getStatusCode().value());
         verify(mapper, times(1)).selectOne(any());
     }
-    @Test void bloomNegativeDoesNotReachDatabase() {
-        assertNull(query.resolve("Ab12Cd"));
+    @Test void invalidFormatDoesNotReachRemoteStorage() {
+        assertNull(query.resolve("invalid-code"));
         verifyNoInteractions(mapper);
     }
     @Test void invalidationAlwaysClearsLocalEvenIfRedisIsDown() {
@@ -101,7 +97,7 @@ class LinkQueryServiceTest {
 
     @Test void legacyRedisValueIsNotTrustedAndDatabaseDecidesStatus() {
         when(values.get("link:uri:Ab12Cd")).thenReturn("https://example.com");
-        when(codes.mightExist("Ab12Cd")).thenReturn(false);
+        when(redis.hasKey("link:null:Ab12Cd")).thenReturn(true);
         assertNull(query.resolve("Ab12Cd"));
         verify(redis).delete("link:uri:Ab12Cd");
     }

@@ -16,17 +16,13 @@ import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import top.mayiqin.url_shortener.link.LinkValidity;
-import top.mayiqin.url_shortener.link.entity.LocalMessage;
-import top.mayiqin.url_shortener.link.mapper.LocalMessageMapper;
 import top.mayiqin.url_shortener.link.service.CacheInvalidationRetryJob;
-import top.mayiqin.url_shortener.link.service.LinkGotoSyncJob;
 import top.mayiqin.url_shortener.stats.service.StatsFlushService;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -41,7 +37,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class FullWorkflowIT {
     private static final String API_TOKEN = "it-api-token-012345678901234567890";
     private static final String ADMIN_TOKEN = "it-admin-token-012345678901234567890";
-    private static final String SPOOL = Path.of("target", "stats-workflow-" + UUID.randomUUID()).toString();
 
     @Container static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0")
             .withDatabaseName("shortlink").withUsername("shortlink").withPassword("shortlink")
@@ -66,16 +61,13 @@ class FullWorkflowIT {
         registry.add("shortlink.admin.token", () -> ADMIN_TOKEN);
         registry.add("shortlink.auth.tokens.default", () -> API_TOKEN);
         registry.add("shortlink.risk.block-private-network", () -> false);
-        registry.add("shortlink.stats.spool-directory", () -> SPOOL);
     }
 
     @Value("${local.server.port}") int port;
     @Autowired JdbcTemplate jdbc;
     @Autowired StringRedisTemplate redis;
     @Autowired StatsFlushService statsFlush;
-    @Autowired LinkGotoSyncJob gotoSync;
     @Autowired CacheInvalidationRetryJob cacheRetry;
-    @Autowired LocalMessageMapper messages;
     private final HttpClient client = HttpClient.newHttpClient();
 
     private HttpResponse<String> request(String method, String path, String body, boolean admin) throws Exception {
@@ -99,8 +91,7 @@ class FullWorkflowIT {
     }
 
     @Test void createRedirectExpireManageAndAggregateStatistics() throws Exception {
-        assertEquals(200, request("POST", "/admin/bloom/rebuild", null, true).statusCode());
-        assertTrue(request("GET", "/admin/stats", null, true).body().contains("\"bloomTrusted\":true"));
+        assertTrue(request("GET", "/admin/stats", null, true).body().contains("\"deliveryMode\":\"best-effort\""));
         String expiring = create(true);
         assertEquals(302, request("GET", expiring, null, false).statusCode());
         await().atMost(Duration.ofSeconds(8)).untilAsserted(() ->
@@ -109,10 +100,9 @@ class FullWorkflowIT {
         String permanent = create(false);
         assertEquals(302, request("GET", permanent, null, false).statusCode());
         String code = permanent.substring(1);
-        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
-            gotoSync.compensate();
-            assertTrue(request("GET", "/api/link/list?gid=default", null, false).body().contains(code));
-        });
+        // 不运行任何同步任务，创建成功后列表立即可读。
+        assertTrue(request("GET", "/api/link/list?gid=default", null, false).body().contains(code));
+        assertTrue(jdbc.queryForObject("SELECT id FROM t_link WHERE short_uri=?", Long.class, code) > 0);
 
         await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(250)).untilAsserted(() -> {
             statsFlush.flush();
@@ -141,12 +131,5 @@ class FullWorkflowIT {
         assertEquals(204, request("POST", "/api/link/" + code + "/enable", null, false).statusCode());
         assertEquals(302, request("GET", permanent, null, false).statusCode());
 
-        LocalMessage failed = CacheInvalidationRetryJob.pendingMessage(code);
-        failed.setBizType("LINK_GOTO_SYNC");
-        failed.setStatus(2);
-        messages.insert(failed);
-        assertTrue(request("GET", "/admin/messages/failed", null, true).body().contains(code));
-        assertEquals(204, request("POST", "/admin/messages/" + code + "/" + failed.getId() + "/retry",
-                null, true).statusCode());
     }
 }

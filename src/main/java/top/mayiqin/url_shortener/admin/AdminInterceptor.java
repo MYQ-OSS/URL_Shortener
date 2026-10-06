@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.cors.CorsUtils;
 import top.mayiqin.url_shortener.auth.TokenSupport;
 
 /**
@@ -24,6 +25,7 @@ public class AdminInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if (CorsUtils.isPreFlightRequest(request)) return true;
         String token = request.getHeader("X-Admin-Token");
         if (TokenSupport.matches(adminToken, token)) {
             return true;

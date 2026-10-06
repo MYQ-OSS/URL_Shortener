@@ -1,0 +1,135 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 历史 ShardingSphere 规则快照，主版本不加载此文件。
+#
+#  拓扑：2 库 × 8 表 = 16 分片
+#    t_link          按 short_uri 分片 —— 跳转主链路必须单分片命中
+#    t_link_goto     按 gid 分片 —— 管理链路的异构索引（ADR-005）
+#    t_local_message 按 shard_key(=short_uri) 分片，且与 t_link 用【同一个】
+#                    分片表达式 —— 同一行链接和它的消息必然落同一个库，
+#                    "落库 + 写消息"才能在同一个本地事务里（本地消息表模式的前提）
+#
+#  ★ 分片表达式（所有表统一，改一处必须全改）：
+#    shard16 = (hashCode() % 16 + 16) % 16     ← +16 修正 Java hashCode 可为负
+#    ds  = shard16.intdiv(8)   (0..1)
+#    tbl = shard16 % 8         (0..7)
+#    迁移脚本 sql/sharding_migrate.sql 的 fn_jhash 与此逐位对齐（已抽查验证）。
+#
+#  单表（不在本文件声明，ShardingSphere 按元数据自动路由到所在库）：
+#    t_id_segment / t_link_stats_daily → 只在 shortlink_0
+#    ⚠️ 号段表绝不能配成广播表：CAS 会在两个库各推一次 max_id，直接写花。
+# ════════════════════════════════════════════════════════════════════════════
+
+mode:
+  type: Standalone
+  repository:
+    type: memory
+
+dataSources:
+  ds_0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    jdbcUrl: jdbc:mysql://127.0.0.1:3306/shortlink_0?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true
+    username: root
+    password: 1234
+    maximumPoolSize: 20
+    minimumIdle: 5
+    connectionTimeout: 3000
+  ds_1:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    jdbcUrl: jdbc:mysql://127.0.0.1:3306/shortlink_1?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true
+    username: root
+    password: 1234
+    maximumPoolSize: 20
+    minimumIdle: 5
+    connectionTimeout: 3000
+
+rules:
+  - !SHARDING
+    tables:
+      t_link_dedup:
+        actualDataNodes: ds_$->{0..1}.t_link_dedup_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: dedup_key
+            shardingAlgorithmName: dedup_db
+        tableStrategy:
+          standard:
+            shardingColumn: dedup_key
+            shardingAlgorithmName: dedup_tbl
+      t_link:
+        actualDataNodes: ds_$->{0..1}.t_link_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: short_uri
+            shardingAlgorithmName: uri_db
+        tableStrategy:
+          standard:
+            shardingColumn: short_uri
+            shardingAlgorithmName: uri_tbl
+      t_link_goto:
+        actualDataNodes: ds_$->{0..1}.t_link_goto_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: gid
+            shardingAlgorithmName: gid_db
+        tableStrategy:
+          standard:
+            shardingColumn: gid
+            shardingAlgorithmName: gid_tbl
+      t_local_message:
+        actualDataNodes: ds_$->{0..1}.t_local_message_$->{0..7}
+        databaseStrategy:
+          standard:
+            shardingColumn: shard_key
+            shardingAlgorithmName: msg_db
+        tableStrategy:
+          standard:
+            shardingColumn: shard_key
+            shardingAlgorithmName: msg_tbl
+
+    shardingAlgorithms:
+      dedup_db:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{((dedup_key.hashCode() % 16 + 16) % 16).intdiv(8)}
+      dedup_tbl:
+        type: INLINE
+        props:
+          algorithm-expression: t_link_dedup_$->{(dedup_key.hashCode() % 16 + 16) % 16 % 8}
+      uri_db:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{((short_uri.hashCode() % 16 + 16) % 16).intdiv(8)}
+      uri_tbl:
+        type: INLINE
+        props:
+          algorithm-expression: t_link_$->{(short_uri.hashCode() % 16 + 16) % 16 % 8}
+      gid_db:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{((gid.hashCode() % 16 + 16) % 16).intdiv(8)}
+      gid_tbl:
+        type: INLINE
+        props:
+          algorithm-expression: t_link_goto_$->{(gid.hashCode() % 16 + 16) % 16 % 8}
+      # 与 uri_* 同一个表达式、换列名——保证消息与链接同库
+      msg_db:
+        type: INLINE
+        props:
+          algorithm-expression: ds_$->{((shard_key.hashCode() % 16 + 16) % 16).intdiv(8)}
+      msg_tbl:
+        type: INLINE
+        props:
+          algorithm-expression: t_local_message_$->{(shard_key.hashCode() % 16 + 16) % 16 % 8}
+
+  # ★ 不声明这条规则，t_id_segment / t_link_stats_daily 这类"只在一个库里的表"
+  #   会直接报 TableNotFoundException——5.5.3 的单表路由必须显式开启（实测踩坑）：
+  #   tables 用通配把 ds_0 里的非分片表全部纳入管理，才会加载其元数据并路由。
+  - !SINGLE
+    tables:
+      - "ds_0.*"
+    defaultDataSource: ds_0
+
+props:
+  # Week 4 验收要看路由日志（跳转/列表不能出现 16 条 SQL 的广播）。
+  # ⚠️ 压测前必须关掉：sql-show 本身会显著拉低 QPS，还会让你误判瓶颈在 DB。
+  sql-show: true

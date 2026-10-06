@@ -31,7 +31,7 @@ public class LinkDedupService {
         }
     }
 
-    /** 这里的预约独立提交，不与 short_uri 分片上的创建事务组成跨库事务。 */
+    /** 预约独立提交，进程在落库前退出时，下次请求仍复用同一个规范短码。 */
     public String reserve(String key) {
         LinkDedup existing = mapper.selectById(key);
         if (existing != null) return existing.getShortUri();

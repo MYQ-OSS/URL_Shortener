@@ -2,9 +2,7 @@
 --
 --   wrk -t4 -c50 -d30s --latency -s wrk/create.lua http://127.0.0.1:8080
 --
--- ⚠️ 创建接口的并发要开小（-c50 而不是 -c200）。理由不是它扛不住，
--- 而是短链的读写比是 1:500 —— 用跳转的并发量去压创建，测的是一个不存在的场景。
--- 真实的创建 QPS 大概在几百到几千，把它压到几万没有参考价值。
+-- 根据目标流量从低并发开始，只对隔离测试环境加压。
 --
 -- 设置 SHORTLINK_API_TOKEN 和其绑定的 SHORTLINK_API_GID（默认 default）。
 -- 创建接口默认限流 10 QPS/gid，压测时通过服务端配置调整。
@@ -19,7 +17,7 @@ wrk.headers["Authorization"] = "Bearer " .. token
 
 function request()
    counter = counter + 1
-   -- forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（发号 + 生成短码 + 落库）。
+   -- forceNew=true 跳过幂等，保证每次都真的走完整的创建链路（随机短码 + 落库）。
    -- 不加这个的话第二次起就命中幂等直接返回，测的是查询而不是创建。
    local body = string.format(
       '{"originUrl":"https://example.com/bench/%d-%d","gid":"%s","forceNew":true}',
@@ -37,6 +35,5 @@ function done(summary, latency, requests)
    for st, c in pairs(status) do io.write(string.format("  %d : %d\n", st, c)) end
    io.write(string.format("\n  创建 QPS : %.0f\n", summary.requests / (summary.duration / 1e6)))
    io.write(string.format("  P99      : %.2f ms\n", latency:percentile(99) / 1000))
-   io.write("\n  对照检查：看 /actuator/metrics 里发号器的 syncLoadCount。\n")
-   io.write("  它持续增长说明 step 太小、预加载赶不上消耗（见 ADR-002）。\n")
+   io.write("\n  对照检查：连接池、错误率和 /admin/stats 的统计队列水位。\n")
 end

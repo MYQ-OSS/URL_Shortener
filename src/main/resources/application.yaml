@@ -1,5 +1,4 @@
 server:
-  # 保留 socket 对端地址，由 ClientIpResolver 按可信代理列表解释 XFF。
   forward-headers-strategy: none
 
 spring:
@@ -7,16 +6,12 @@ spring:
     name: URL_Shortener
 
   datasource:
-    # Week 1-3 直连 MySQL；Week 4 接 ShardingSphere 时改成：
-    #   url: jdbc:shardingsphere:classpath:sharding.yaml
-    #   driver-class-name: org.apache.shardingsphere.driver.ShardingSphereDriver
+    # 本机示例连接；部署时通过私有配置或 SPRING_DATASOURCE_* 覆盖。
     url: jdbc:mysql://127.0.0.1:3306/shortlink?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
     username: root
     password: 1234
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      # 压测第 4 阶段要调这里。默认 10 在跳转链路打满时会成为瓶颈。
-      # 经验公式：连接数 ≈ (核数 * 2) + 磁盘数，但真实值必须压出来。
       maximum-pool-size: 20
       minimum-idle: 5
       connection-timeout: 3000
@@ -26,10 +21,6 @@ spring:
       host: 127.0.0.1
       port: 6379
       password: 1234
-      # Redis 故障降级配套（ADR-015）：命令超时收紧到 500ms。
-      # Redis 宕机时跳转链路的降级路径靠快失败控制尾部延迟——
-      # 默认超时会让 L1 miss 的请求在 Redisson 重试上拖出秒级 P99。
-      # 正常态本地 Redis 命令 P99.9 < 10ms，500ms 极安全。
       timeout: 500ms
       lettuce:
         pool:
@@ -44,21 +35,14 @@ spring:
     password: guest
     publisher-confirm-type: correlated   # 统计消息要确认，否则丢了都不知道
     publisher-returns: true
-    # 连接超时必须收紧：broker 不可达时 convertAndSend 会阻塞到这个超时。
-    # 统计链路的契约是"绝不影响跳转"，默认 60s 的超时会把跳转线程挂住。
     connection-timeout: 2000
     listener:
       simple:
-        # 消费失败的处理链（与 RabbitConfig 的死信拓扑配套）：
-        #   进程内重试 3 次（消息不重新入队，不产生重复投递）
-        #   -> 仍失败 -> reject 且不回队 -> broker 按 x-dead-letter-exchange 转入死信队列
-        # requeue 不能开：毒消息（格式非法）会陷入"消费-失败-回队-再消费"死循环。
         retry:
           enabled: true
           initial-interval: 500
           max-retries: 3
         default-requeue-rejected: false
-        # broker 未就绪时队列不存在不算致命错误，容器会自动重连（本地无 MQ 时也能启动）
         missing-queues-fatal: false
   web:
     error:
@@ -73,47 +57,35 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
-    # ⚠️ 压测时务必关掉 SQL 日志。开着它跳转链路 QPS 会掉一大截，
-    # 而且你会误以为瓶颈在 DB。
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 shortlink:
+  cors:
+    # 只放行合法预检；正式请求仍要求凭据。
+    allowed-origins: ${SHORTLINK_CORS_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}
   proxy:
     trusted-cidrs: ${SHORTLINK_TRUSTED_PROXIES:}
   fallback:
+    # 每实例保护预算，限制 Redis 故障时的数据库压力。
     create-qps: 10
     redirect-qps: 1000
     db-qps: 200
     db-max-concurrent: 8
   stats:
-    spool-directory: ${SHORTLINK_STATS_SPOOL:./data/stats-outbox}
-    max-pending: 100000
+    # 访问趋势使用有界内存队列，满或退出时允许丢失，不用于审计。
+    max-pending: 4096
     confirm-timeout-millis: 5000
   admin:
     token: ${SHORTLINK_ADMIN_TOKEN:}
   auth:
     tokens:
       default: ${SHORTLINK_API_TOKEN:}
-  # 短域名。本地开发用 localhost:8080；真实短域名需要 ICP 备案（周期不可控，别卡在这）
   domain: localhost:8080
 
   cache:
-    # 100_000 而不是 10_000 —— 这个值是算出来的，不是拍的。
-    # Zipf α=1.0 / N=1000万 时（见 ADR-012 的数值计算）：
-    #    10,000 条 -> L1 覆盖 58.6% 请求，占内存  2.4 MB
-    #   100,000 条 -> L1 覆盖 72.4% 请求，占内存 23.8 MB   <-- 多 21MB 换 +13.8pp
-    #   500,000 条 -> L1 覆盖 82.1% 请求，占内存  119 MB   <-- 边际收益明显递减
-    # 期望延迟从 207us 降到 138us（-33%）。23MB 对 JVM 是白菜价，所以选 100k。
     local-max-size: 100000
-    # 5 秒不是为了容量，是为了一致性兜底：
-    # Redis 正常而 Pub/Sub 丢消息时，短 TTL 最多保留旧 L1 5 秒。
-    # Redis 本身故障时，旧 L2 在恢复后靠持久失效消息补偿清理。
+    # Pub/Sub 漏收时限制其他实例持有旧 L1 的时间。
     local-ttl-seconds: 5
-
-  bloom:
-    # 1000 万 / 0.01% -> 19.17 bit/元素 -> 22.9 MiB, k=13
-    expected-insertions: 10000000
-    false-probability: 0.0001
 
   rate-limit:
     create:        # 严格：写操作，刷量无正当理由
@@ -125,19 +97,13 @@ shortlink:
 
   risk:
     block-private-network: true
-    # 域名黑白名单（Week 5）：后缀匹配——evil.example 同时拦 evil.example 与 x.evil.example。
-    # ⚠️ 用逗号分隔的字符串而不是 YAML 列表：@Value 注入 List 只认逗号分隔标量。
-    # 生产接 URL 信誉库时可换成动态下发。留空 = 不拦。
     blocked-domains: evil.example,phishing.test
-    # 域名白名单：非空则进入白名单模式（只放行命中域名）。默认留空不启用。
     allowed-domains:
 
 logging:
   level:
     root: INFO
     top.mayiqin.url_shortener: INFO
-  # ⚠️ 压测前把跳转链路的日志级别调到 WARN。
-  # 同步日志刷盘是 async-profiler 火焰图里最常见的瓶颈，通常占 15-30%。
 
 management:
   endpoints:
