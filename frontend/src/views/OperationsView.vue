@@ -25,7 +25,7 @@ function confirmMaintenance(action: MaintenanceAction) {
   const labels = { cache: '清理本机缓存', expired: '清理过期链接' }
   const descriptions = {
     cache: '当前服务实例的本地缓存会被清空，后续请求将逐步预热。',
-    expired: '已过期的短链会被逻辑删除，这些记录将不再出现在链接集合中。',
+    expired: '已过期的短链会被逻辑删除，这些记录将不再出现在链接集合中。单次执行有时间预算，没清完或被定时任务占用时会提示重试。',
   }
   confirmation.value = { title: `${labels[action]}？`, message: descriptions[action], run: () => workspace.maintain(action) }
 }

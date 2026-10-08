@@ -5,6 +5,8 @@ import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import top.mayiqin.url_shortener.link.service.ExpiredLinkCleanupJob;
+import top.mayiqin.url_shortener.link.service.ExpiredLinkCleanupJob.CleanupResult;
+import top.mayiqin.url_shortener.link.service.ExpiredLinkCleanupJob.CleanupStatus;
 import top.mayiqin.url_shortener.risk.UrlRiskChecker;
 import top.mayiqin.url_shortener.stats.service.StatsCollector;
 import top.mayiqin.url_shortener.stats.service.StatsFlushService;
@@ -18,6 +20,12 @@ import java.util.Map;
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
+    /**
+     * 人工触发的时间预算，必须明显小于前端维护操作的 30 秒超时（api.ts）：
+     * 预算用尽就带 {@code truncated} 返回，由运维再点一次，而不是让客户端先超时、服务端仍在跑。
+     */
+    private static final long MANUAL_CLEAN_BUDGET_MILLIS = 20_000L;
+
     private final Cache<String, String> localCache;
     private final StatsCollector statsCollector;
     private final StatsFlushService statsFlushService;
@@ -68,9 +76,23 @@ public class AdminController {
         return ResponseEntity.ok(Map.of("status", "success"));
     }
 
+    /**
+     * 手动触发过期短链清理。
+     *
+     * <p>响应不再用单一的 {@code cleanedRows} 表达结果：{@code status} 区分跑完/提前结束/
+     * 没抢到锁/被中断，{@code executed} 表示本次是否真的执行了清理，{@code moreRemaining}
+     * 表示是否应稍后再试。避免出现“{@code cleanedRows=0} 但其实是锁被占、什么都没做”的歧义。
+     */
     @PostMapping("/expired/clean")
     public ResponseEntity<Map<String, Object>> cleanExpiredLinks() {
-        return ResponseEntity.ok(Map.of("status", "success", "cleanedRows", cleanupJob.cleanupExpiredLinks()));
+        CleanupResult result = cleanupJob.cleanupExpiredLinks(MANUAL_CLEAN_BUDGET_MILLIS);
+        boolean executed = result.status() == CleanupStatus.COMPLETED || result.status() == CleanupStatus.TRUNCATED;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", result.status().name().toLowerCase(Locale.ROOT));
+        body.put("executed", executed);
+        body.put("cleanedRows", result.cleanedRows());
+        body.put("moreRemaining", result.moreRemaining());
+        return ResponseEntity.ok(body);
     }
 
     public record RiskRules(List<String> blockedDomains, List<String> allowedDomains) { }

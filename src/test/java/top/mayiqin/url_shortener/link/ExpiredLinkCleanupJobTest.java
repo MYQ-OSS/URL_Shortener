@@ -31,12 +31,57 @@ class ExpiredLinkCleanupJobTest {
         when(mapper.selectList(any())).thenReturn(List.of(expired), List.of());
         when(mapper.update(isNull(), any())).thenReturn(1);
 
-        assertEquals(1L, new ExpiredLinkCleanupJob(mapper, redisson, query).cleanupExpiredLinks());
+        ExpiredLinkCleanupJob.CleanupResult result =
+                new ExpiredLinkCleanupJob(mapper, redisson, query).cleanupExpiredLinks(60_000);
+
+        assertEquals(1L, result.cleanedRows());
+        assertEquals(ExpiredLinkCleanupJob.CleanupStatus.COMPLETED, result.status());
+        assertFalse(result.moreRemaining());
 
         ArgumentCaptor<LambdaUpdateWrapper> wrapper = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
         verify(mapper).update(isNull(), wrapper.capture());
         assertTrue(wrapper.getValue().getSqlSegment().contains("short_uri"));
         verify(query).invalidate("Ab12Cd");
+        verify(lock).unlock();
+    }
+
+    @Test void skippedRunIsDistinguishedFromNothingToClean() throws Exception {
+        MapperMetadata.initialize(Link.class);
+        LinkMapper mapper = mock(LinkMapper.class);
+        RedissonClient redisson = mock(RedissonClient.class);
+        RLock lock = mock(RLock.class);
+        LinkQueryService query = mock(LinkQueryService.class);
+        when(redisson.getLock(anyString())).thenReturn(lock);
+        when(lock.tryLock(0, 30, TimeUnit.MINUTES)).thenReturn(false);
+
+        ExpiredLinkCleanupJob.CleanupResult result =
+                new ExpiredLinkCleanupJob(mapper, redisson, query).cleanupExpiredLinks(60_000);
+
+        assertEquals(ExpiredLinkCleanupJob.CleanupStatus.SKIPPED_LOCK_HELD, result.status());
+        assertEquals(0L, result.cleanedRows());
+        assertTrue(result.moreRemaining());
+        verify(mapper, never()).selectList(any());
+        verify(lock, never()).unlock();
+    }
+
+    @Test void exhaustedTimeBudgetStopsBeforeScanningAndReportsRemainingWork() throws Exception {
+        MapperMetadata.initialize(Link.class);
+        LinkMapper mapper = mock(LinkMapper.class);
+        RedissonClient redisson = mock(RedissonClient.class);
+        RLock lock = mock(RLock.class);
+        LinkQueryService query = mock(LinkQueryService.class);
+        when(redisson.getLock(anyString())).thenReturn(lock);
+        when(lock.tryLock(0, 30, TimeUnit.MINUTES)).thenReturn(true);
+        when(lock.isHeldByCurrentThread()).thenReturn(true);
+
+        ExpiredLinkCleanupJob.CleanupResult result =
+                new ExpiredLinkCleanupJob(mapper, redisson, query).cleanupExpiredLinks(0);
+
+        assertEquals(ExpiredLinkCleanupJob.CleanupStatus.TRUNCATED, result.status());
+        assertEquals(0L, result.cleanedRows());
+        assertTrue(result.moreRemaining());
+        verify(mapper, never()).selectList(any());
+        verifyNoInteractions(query);
         verify(lock).unlock();
     }
 }

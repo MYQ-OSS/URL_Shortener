@@ -1,5 +1,5 @@
 import JSONbigFactory from 'json-bigint'
-import type { Connection, CreateLinkInput, LinkRecord, MaintenanceAction, RuntimeStats } from '../types'
+import type { Connection, CreateLinkInput, LinkRecord, MaintenanceAction, MaintenanceResult, RuntimeStats } from '../types'
 import { safeHttpUrl } from './format'
 
 // 雪花 ID 大于 JS 的安全整数范围，必须在 JSON 解析阶段保留原始十进制字符串。
@@ -98,9 +98,10 @@ export function createApi(connection: Connection) {
       if (!data?.localCache || !data?.stats) throw new ApiError('运行状态数据不完整。')
       return data
     },
-    maintenance(action: MaintenanceAction) {
+    maintenance(action: MaintenanceAction): Promise<MaintenanceResult> {
       const paths = { cache: '/admin/cache/local/clear', expired: '/admin/expired/clean' }
-      return request<Record<string, unknown>>(paths[action], 'POST', undefined, true, 30_000)
+      // 30 秒超时：后端人工清理的时间预算是 20 秒，预算用尽会带 truncated 返回，不会让客户端先超时。
+      return request<MaintenanceResult>(paths[action], 'POST', undefined, true, 30_000)
     },
     risk: (rules: { blockedDomains?: string[]; allowedDomains?: string[] }) => request<void>('/admin/risk/reload', 'POST', rules, true),
   }

@@ -3,8 +3,8 @@ import { computed, ref } from 'vue'
 import { useClock } from '../lib/use-clock'
 import { ApiError, createApi, validateConnection } from '../lib/api'
 import { demoLinks, demoStats } from '../lib/demo'
-import { backendDate, linkStatus, shortUrl } from '../lib/format'
-import type { Connection, CreateLinkInput, LinkRecord, MaintenanceAction, RuntimeStats } from '../types'
+import { backendDate, linkStatus, number, shortUrl } from '../lib/format'
+import type { Connection, CreateLinkInput, LinkRecord, MaintenanceAction, MaintenanceResult, RuntimeStats } from '../types'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const mode = ref<'demo' | 'live'>('demo')
@@ -161,8 +161,31 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       stats.value ??= demoStats()
       if (action === 'cache') { stats.value.localCache.size = 0; stats.value.localCache.hitRate = '0.0000' }
       if (action === 'expired') links.value = links.value.filter(link => linkStatus(link) !== 'expired')
-    } else { await createApi(connection.value).maintenance(action); await refreshOperations() }
-    notify({ cache: '本机缓存已清理', expired: '过期链接清理已完成' }[action])
+      notify({ cache: '本机缓存已清理', expired: '过期链接清理已完成' }[action])
+      return
+    }
+    const result = await createApi(connection.value).maintenance(action)
+    await refreshOperations()
+    const summary = maintenanceSummary(action, result)
+    notify(summary.message, summary.tone)
+  }
+
+  // 后端会区分“跑完 / 时间预算用尽 / 没抢到锁 / 被中断”，必须如实转述：
+  // 否则 cleanedRows=0 会被读成“没有过期数据”，而实际可能是什么都没做。
+  function maintenanceSummary(action: MaintenanceAction, result: MaintenanceResult):
+      { message: string; tone: 'success' | 'info' } {
+    if (action === 'cache') return { message: '本机缓存已清理', tone: 'success' }
+    const rows = number(result.cleanedRows ?? 0)
+    switch (result.status) {
+      case 'truncated':
+        return { message: `本次已清理 ${rows} 条，时间预算用尽仍有剩余，请稍后再次执行`, tone: 'info' }
+      case 'skipped_lock_held':
+        return { message: '定时任务或其他实例正在清理，本次未执行，请稍后重试', tone: 'info' }
+      case 'interrupted':
+        return { message: `清理被中断，已处理 ${rows} 条，请稍后重试`, tone: 'info' }
+      default:
+        return { message: `过期链接清理完成，共 ${rows} 条`, tone: 'success' }
+    }
   }
 
   async function reloadRisk(rules: { blockedDomains?: string[]; allowedDomains?: string[] }) {

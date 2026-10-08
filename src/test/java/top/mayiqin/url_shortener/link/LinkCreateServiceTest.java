@@ -11,12 +11,15 @@ import top.mayiqin.url_shortener.link.mapper.LinkMapper;
 import top.mayiqin.url_shortener.link.service.LinkCreateService;
 import top.mayiqin.url_shortener.link.service.LinkQueryService;
 import top.mayiqin.url_shortener.link.service.LinkDedupService;
+import top.mayiqin.url_shortener.link.service.LinkManageService;
 import top.mayiqin.url_shortener.risk.UrlRiskChecker;
 import top.mayiqin.url_shortener.shortcode.ShortCodeGenerator;
 
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.lenient;
 
@@ -152,5 +155,92 @@ class LinkCreateServiceTest {
         assertThrows(IllegalStateException.class, () -> linkCreateService.create(
                 "https://example.com", "default", false, 0, null, null));
         verifyNoInteractions(queryService);
+    }
+
+    @Test
+    @DisplayName("规范短码已逻辑删除时换新码，不返回永久 410 的链接")
+    void deletedCanonicalCodeIsReplacedWithNewCode() {
+        String originUrl = "https://example.com/item/123";
+        when(dedupService.reserve(any())).thenReturn("Old001", "New002");
+        Link deleted = new Link();
+        deleted.setShortUri("Old001");
+        deleted.setDomain("s.hicode.top");
+        deleted.setGid("default");
+        deleted.setOriginUrl(originUrl);
+        deleted.setDelFlag(1);
+        when(linkMapper.selectOne(any())).thenReturn(deleted, null);
+
+        assertEquals("http://s.hicode.top/New002",
+                linkCreateService.create(originUrl, "default", false, 0, null, null));
+
+        verify(dedupService).replace(any(), eq("Old001"));
+        verify(linkMapper).insert(any(Link.class));
+        verify(queryService).warmUp("New002", originUrl, null);
+    }
+
+    @Test
+    @DisplayName("规范短码已过期时换新码，让同一条 URL 能重新建出可用短链")
+    void expiredCanonicalCodeIsReplacedWithNewCode() {
+        String originUrl = "https://example.com/item/456";
+        LocalDateTime newEnd = LocalDateTime.now().plusDays(7);
+        when(dedupService.reserve(any())).thenReturn("Exp001", "New003");
+        Link expired = new Link();
+        expired.setShortUri("Exp001");
+        expired.setDomain("s.hicode.top");
+        expired.setGid("default");
+        expired.setOriginUrl(originUrl);
+        expired.setValidType(1);
+        expired.setValidEnd(LocalDateTime.now().minusDays(7));
+        when(linkMapper.selectOne(any())).thenReturn(expired, null);
+
+        assertEquals("http://s.hicode.top/New003",
+                linkCreateService.create(originUrl, "default", false, 1, newEnd, null));
+
+        verify(dedupService).replace(any(), eq("Exp001"));
+        verify(linkMapper).insert(any(Link.class));
+        verify(queryService).warmUp(eq("New003"), eq(originUrl), any());
+    }
+
+    @Test
+    @DisplayName("并发赢家已逻辑删除时不复用其短码，改换预约重建")
+    void deletedConcurrentWinnerIsNotReturned() {
+        String originUrl = "https://example.com";
+        when(dedupService.reserve(any())).thenReturn("Winner", "Fresh1");
+        Link winner = new Link();
+        winner.setShortUri("Winner");
+        winner.setDomain("s.hicode.top");
+        winner.setGid("default");
+        winner.setOriginUrl(originUrl);
+        winner.setDelFlag(1);
+        when(linkMapper.selectOne(any())).thenReturn(null, winner, null);
+        doThrow(new org.springframework.dao.DuplicateKeyException("race"))
+                .doReturn(1).when(linkMapper).insert(any(Link.class));
+
+        assertEquals("http://s.hicode.top/Fresh1",
+                linkCreateService.create(originUrl, "default", false, 0, null, null));
+
+        verify(dedupService).replace(any(), eq("Winner"));
+        verify(linkMapper, times(2)).insert(any(Link.class));
+        verify(queryService).warmUp("Fresh1", originUrl, null);
+    }
+
+    @Test
+    @DisplayName("用户禁用的既有短码仍然复用，不另发新码")
+    void disabledCanonicalCodeIsStillReused() {
+        String originUrl = "https://example.com/item/789";
+        when(dedupService.reserve(any())).thenReturn("Off001");
+        Link disabled = new Link();
+        disabled.setShortUri("Off001");
+        disabled.setDomain("s.hicode.top");
+        disabled.setGid("default");
+        disabled.setOriginUrl(originUrl);
+        disabled.setEnableStatus(LinkManageService.STATUS_DISABLED_BY_USER);
+        when(linkMapper.selectOne(any())).thenReturn(disabled);
+
+        assertEquals("http://s.hicode.top/Off001",
+                linkCreateService.create(originUrl, "default", false, 0, null, null));
+
+        verify(dedupService, never()).replace(any(), any());
+        verify(linkMapper, never()).insert(any(Link.class));
     }
 }

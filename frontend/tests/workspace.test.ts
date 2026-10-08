@@ -1,8 +1,10 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useWorkspaceStore } from '../src/stores/workspace'
+import { demoStats } from '../src/lib/demo'
 
 const config = { baseUrl: '', gid: 'default', apiToken: 'api-token', adminToken: '' }
+const adminConfig = { baseUrl: '', gid: 'default', apiToken: 'api-token', adminToken: 'admin-token-012345678901234567890' }
 const json = (body: string) => new Response(body, { headers: { 'Content-Type': 'application/json' } })
 const input = { originUrl: 'https://example.com', gid: 'default', forceNew: false, validType: 0 as const, validEnd: null, describe: '新链接' }
 beforeEach(() => { vi.useFakeTimers(); setActivePinia(createPinia()) })
@@ -55,4 +57,25 @@ it('演示缓存清理后刷新保持维护结果，运行状态不再包含实�
   expect(store.stats?.stats.deliveryMode).toBe('best-effort')
   expect(store.stats).not.toHaveProperty('bloomVersion')
   expect(store.stats).not.toHaveProperty('idGenerator')
+})
+
+it('过期清理如实转述后端结局，不把“未执行”读成“没有数据”', async () => {
+  const cases = [
+    { body: '{"status":"completed","executed":true,"cleanedRows":3,"moreRemaining":false}', expected: '过期链接清理完成，共 3 条' },
+    { body: '{"status":"skipped_lock_held","executed":false,"cleanedRows":0,"moreRemaining":true}', expected: '本次未执行' },
+    { body: '{"status":"truncated","executed":true,"cleanedRows":500,"moreRemaining":true}', expected: '时间预算用尽仍有剩余' },
+    { body: '{"status":"interrupted","executed":false,"cleanedRows":12,"moreRemaining":true}', expected: '清理被中断' },
+  ]
+  for (const item of cases) {
+    setActivePinia(createPinia())
+    // connect 取列表 → 维护操作 → refreshOperations 取运行状态
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(json('[]'))
+      .mockResolvedValueOnce(json(item.body))
+      .mockResolvedValueOnce(json(JSON.stringify(demoStats()))))
+    const store = useWorkspaceStore()
+    await store.connect(adminConfig)
+    await store.maintain('expired')
+    expect(store.toasts.some(toast => toast.message.includes(item.expected))).toBe(true)
+  }
 })

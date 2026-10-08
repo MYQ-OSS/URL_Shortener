@@ -71,13 +71,41 @@ class AdminMaintenanceApiTest {
     }
 
     @Test void expiredCleanupAndSelectiveRiskUpdatesRemainAvailable() throws Exception {
-        when(cleanupJob.cleanupExpiredLinks()).thenReturn(3L);
+        when(cleanupJob.cleanupExpiredLinks(anyLong()))
+                .thenReturn(new ExpiredLinkCleanupJob.CleanupResult(ExpiredLinkCleanupJob.CleanupStatus.COMPLETED, 3L));
         mvc.perform(post("/admin/expired/clean").header("X-Admin-Token", TOKEN))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.cleanedRows").value(3));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cleanedRows").value(3))
+                .andExpect(jsonPath("$.status").value("completed"))
+                .andExpect(jsonPath("$.executed").value(true))
+                .andExpect(jsonPath("$.moreRemaining").value(false));
+        // 人工触发的预算必须小于 api.ts 给维护操作设的 30 秒超时，否则客户端会先超时。
+        verify(cleanupJob).cleanupExpiredLinks(20_000L);
         mvc.perform(post("/admin/risk/reload").header("X-Admin-Token", TOKEN)
                 .contentType("application/json").content("{\"blockedDomains\":[\"evil.example\"]}"))
                 .andExpect(status().isOk());
         verify(riskChecker).reloadRules(List.of("evil.example"), null);
+    }
+
+    @Test void unexecutedAndTruncatedCleanupRunsAreReportedExplicitly() throws Exception {
+        when(cleanupJob.cleanupExpiredLinks(anyLong()))
+                .thenReturn(new ExpiredLinkCleanupJob.CleanupResult(ExpiredLinkCleanupJob.CleanupStatus.SKIPPED_LOCK_HELD, 0L));
+        mvc.perform(post("/admin/expired/clean").header("X-Admin-Token", TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("skipped_lock_held"))
+                .andExpect(jsonPath("$.executed").value(false))
+                .andExpect(jsonPath("$.cleanedRows").value(0))
+                .andExpect(jsonPath("$.moreRemaining").value(true));
+
+        reset(cleanupJob);
+        when(cleanupJob.cleanupExpiredLinks(anyLong()))
+                .thenReturn(new ExpiredLinkCleanupJob.CleanupResult(ExpiredLinkCleanupJob.CleanupStatus.TRUNCATED, 500L));
+        mvc.perform(post("/admin/expired/clean").header("X-Admin-Token", TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("truncated"))
+                .andExpect(jsonPath("$.executed").value(true))
+                .andExpect(jsonPath("$.cleanedRows").value(500))
+                .andExpect(jsonPath("$.moreRemaining").value(true));
     }
 
     @Test void administratorHeaderPreflightAndRequestRemainSeparate() throws Exception {

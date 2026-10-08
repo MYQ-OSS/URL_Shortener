@@ -47,7 +47,9 @@ public class LinkCreateService {
             if (!forceNew) {
                 Link existing = findByCode(code);
                 if (existing != null) {
-                    if (sameTarget(existing, gid, originUrl)) return fullUrl(existing.getDomain(), code);
+                    if (reusable(existing, gid, originUrl)) {
+                        return fullUrl(existing.getDomain(), code);
+                    }
                     dedup.replace(key, code);
                     continue;
                 }
@@ -71,7 +73,7 @@ public class LinkCreateService {
             } catch (DuplicateKeyException collision) {
                 if (!forceNew) {
                     Link winner = findByCode(code);
-                    if (winner != null && sameTarget(winner, gid, originUrl)) {
+                    if (winner != null && reusable(winner, gid, originUrl)) {
                         return fullUrl(winner.getDomain(), code);
                     }
                     dedup.replace(key, code);
@@ -90,6 +92,23 @@ public class LinkCreateService {
 
     private static boolean sameTarget(Link link, String gid, String url) {
         return gid.equals(link.getGid()) && url.equals(link.getOriginUrl());
+    }
+
+    /**
+     * 幂等复用既有短码的前提：同目标<b>且记录当前仍可用</b>。
+     *
+     * <p>已逻辑删除（清理任务对过期短链置 {@code del_flag=1}，行仍占用 {@code uk_short_uri}）
+     * 或已过期的记录不能复用：否则调用方拿到一个永久 410 的链接，且预约始终指向这个死码，
+     * 同一条 URL 再也建不出可用短链。此时换预约、用新码重新落库。
+     *
+     * <p><b>刻意不把 {@code enable_status} 计入不可复用</b>：用户禁用（1）的记录应由用户自己恢复，
+     * 另发新码只会让同一 URL 产生重复记录；风控封禁（2）若换码，等于允许被封 URL 靠
+     * "再创建一次"绕过封禁。两种情况都返回既有短码。
+     */
+    private static boolean reusable(Link link, String gid, String url) {
+        return sameTarget(link, gid, url)
+                && (link.getDelFlag() == null || link.getDelFlag() == 0)
+                && !link.expired();
     }
 
     private static String fullUrl(String domain, String code) {

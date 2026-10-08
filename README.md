@@ -58,7 +58,7 @@ java -jar target/URL_Shortener-0.0.1-SNAPSHOT.jar
 | `POST /api/link/{code}/disable`、`enable` | 校验归属与风控状态后停用/恢复 |
 | `GET /admin/stats` | 本地缓存、统计内存队列及落库水位 |
 | `POST /admin/cache/local/clear` | 清当前实例的本地缓存 |
-| `POST /admin/expired/clean` | 逻辑删除过期链接并失效缓存 |
+| `POST /admin/expired/clean` | 逻辑删除过期链接并失效缓存；单次有时间预算，返回 `status`/`executed`/`cleanedRows`/`moreRemaining` 区分跑完、提前结束与未抢到锁 |
 | `POST /admin/risk/reload` | 选择性更新域名黑白名单 |
 | `GET /actuator/prometheus` | 受管理员凭据保护的监控指标 |
 
