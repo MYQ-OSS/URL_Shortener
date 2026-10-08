@@ -51,7 +51,9 @@ public class LinkManageService {
                 .ne(Link::getEnableStatus, STATUS_BLOCKED_BY_RISK)
                 .eq(Link::getDelFlag, 0)
                 .set(Link::getEnableStatus, enableStatus));
-            if (rows == 0) return false;
+            if (rows == 0) {
+                return false;
+            }
             messageMapper.insert(CacheInvalidationRetryJob.pendingMessage(shortUri));
             return true;
         });

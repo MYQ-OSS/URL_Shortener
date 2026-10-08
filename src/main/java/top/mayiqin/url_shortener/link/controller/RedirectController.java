@@ -1,5 +1,6 @@
 package top.mayiqin.url_shortener.link.controller;
 
+import lombok.Data;
 import top.mayiqin.url_shortener.common.ClientIpResolver;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,6 +17,7 @@ import top.mayiqin.url_shortener.stats.service.StatsCollector;
 import java.net.URI;
 
 /** 跳转使用 302，便于每次请求检查禁用与过期状态；访问趋势统计仅异步入队。 */
+@Data
 @RestController
 public class RedirectController {
 
@@ -23,16 +25,6 @@ public class RedirectController {
     private final RateLimiter rateLimiter;
     private final StatsCollector statsCollector;
     private final ClientIpResolver clientIpResolver;
-
-    public RedirectController(LinkQueryService queryService,
-                              RateLimiter rateLimiter,
-                              StatsCollector statsCollector,
-                              ClientIpResolver clientIpResolver) {
-        this.queryService = queryService;
-        this.rateLimiter = rateLimiter;
-        this.statsCollector = statsCollector;
-        this.clientIpResolver = clientIpResolver;
-    }
 
     @GetMapping("/{shortUri:[0-9a-zA-Z]{6}}")
     public ResponseEntity<Void> redirect(@PathVariable String shortUri,

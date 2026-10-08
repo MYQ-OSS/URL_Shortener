@@ -34,7 +34,9 @@ public class LinkDedupService {
     /** 预约独立提交，进程在落库前退出时，下次请求仍复用同一个规范短码。 */
     public String reserve(String key) {
         LinkDedup existing = mapper.selectById(key);
-        if (existing != null) return existing.getShortUri();
+        if (existing != null) {
+            return existing.getShortUri();
+        }
         LinkDedup reservation = new LinkDedup();
         reservation.setDedupKey(key);
         reservation.setShortUri(codes.generate());

@@ -90,7 +90,9 @@ public class RateLimiter {
     }
 
     private boolean acquire(String key, int capacity, int refillPerSec) {
-        if (redisAvailability.isOpen()) return fallback(key);
+        if (redisAvailability.isOpen()) {
+            return fallback(key);
+        }
         try {
             Long allowed = redis.execute(tokenBucketScript, List.of(key),
                     String.valueOf(capacity),

@@ -10,10 +10,14 @@ public final class ShortCodeFormat {
     public static char[] alphabet() { return ALPHABET.clone(); }
 
     public static boolean isWellFormed(String code) {
-        if (code == null || code.length() != CODE_LENGTH) return false;
+        if (code == null || code.length() != CODE_LENGTH) {
+            return false;
+        }
         for (int i = 0; i < code.length(); i++) {
             char c = code.charAt(i);
-            if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z')) return false;
+            if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z')) {
+                return false;
+            }
         }
         return true;
     }

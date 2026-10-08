@@ -33,7 +33,9 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, String>> status(ResponseStatusException e) {
         var builder = ResponseEntity.status(e.getStatusCode());
-        if (e.getStatusCode().value() == 503) builder.header("Retry-After", "1");
+        if (e.getStatusCode().value() == 503) {
+            builder.header("Retry-After", "1");
+        }
         return builder.body(Map.of("error", e.getReason() == null ? "请求失败" : e.getReason()));
     }
 

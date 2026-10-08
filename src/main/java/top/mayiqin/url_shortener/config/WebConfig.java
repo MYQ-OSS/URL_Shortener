@@ -1,5 +1,6 @@
 package top.mayiqin.url_shortener.config;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
@@ -32,7 +33,7 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     @Override
-    public void addCorsMappings(CorsRegistry registry) {
+    public void addCorsMappings(@NonNull CorsRegistry registry) {
         // MVC 校验来源，鉴权拦截器只跳过合法形态的预检；正式请求仍必须携带 Token。
         for (String path : new String[]{"/api/**", "/admin/**"}) {
             registry.addMapping(path)

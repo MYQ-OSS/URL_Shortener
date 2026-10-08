@@ -8,7 +8,9 @@ public final class LocalTokenBucket {
     private long lastNanos = System.nanoTime();
 
     public LocalTokenBucket(int capacity, int refillPerSecond) {
-        if (capacity <= 0 || refillPerSecond <= 0) throw new IllegalArgumentException("限流参数必须为正数");
+        if (capacity <= 0 || refillPerSecond <= 0) {
+            throw new IllegalArgumentException("限流参数必须为正数");
+        }
         this.capacity = capacity;
         this.refillPerSecond = refillPerSecond;
         this.tokens = capacity;
@@ -18,7 +20,9 @@ public final class LocalTokenBucket {
         long now = System.nanoTime();
         tokens = Math.min(capacity, tokens + (now - lastNanos) / 1_000_000_000D * refillPerSecond);
         lastNanos = now;
-        if (tokens < 1) return false;
+        if (tokens < 1) {
+            return false;
+        }
         tokens -= 1;
         return true;
     }

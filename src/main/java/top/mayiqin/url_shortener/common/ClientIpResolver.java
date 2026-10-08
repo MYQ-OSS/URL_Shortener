@@ -52,19 +52,29 @@ public class ClientIpResolver {
 
     /** 只解析 IP 字面量；不会为请求头内容发起 DNS 查询。 */
     private static byte[] literal(String value) {
-        if (value == null || value.isEmpty()) return null;
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
         if (value.contains(":")) {
-            if (!value.matches("[0-9a-fA-F:.]+")) return null;
+            if (!value.matches("[0-9a-fA-F:.]+")) {
+                return null;
+            }
             try { return InetAddress.getByName(value).getAddress(); }
             catch (UnknownHostException e) { return null; }
         }
         String[] parts = value.split("\\.", -1);
-        if (parts.length != 4) return null;
+        if (parts.length != 4) {
+            return null;
+        }
         byte[] bytes = new byte[4];
         for (int i = 0; i < 4; i++) {
-            if (!parts[i].matches("0|[1-9][0-9]{0,2}")) return null;
+            if (!parts[i].matches("0|[1-9][0-9]{0,2}")) {
+                return null;
+            }
             int n = Integer.parseInt(parts[i]);
-            if (n > 255) return null;
+            if (n > 255) {
+                return null;
+            }
             bytes[i] = (byte) n;
         }
         return bytes;
@@ -74,17 +84,25 @@ public class ClientIpResolver {
         static Network parse(String cidr) {
             String[] parts = cidr.split("/", -1);
             byte[] address = literal(parts[0]);
-            if (address == null || parts.length > 2) throw new IllegalArgumentException("非法代理 CIDR: " + cidr);
+            if (address == null || parts.length > 2) {
+                throw new IllegalArgumentException("非法代理 CIDR: " + cidr);
+            }
             int bits = parts.length == 1 ? address.length * 8 : Integer.parseInt(parts[1]);
-            if (bits < 0 || bits > address.length * 8) throw new IllegalArgumentException("非法代理 CIDR: " + cidr);
+            if (bits < 0 || bits > address.length * 8) {
+                throw new IllegalArgumentException("非法代理 CIDR: " + cidr);
+            }
             return new Network(address, bits);
         }
 
         boolean contains(byte[] other) {
-            if (address.length != other.length) return false;
+            if (address.length != other.length) {
+                return false;
+            }
             for (int i = 0; i < prefix; i++) {
                 int mask = 1 << (7 - i % 8);
-                if ((address[i / 8] & mask) != (other[i / 8] & mask)) return false;
+                if ((address[i / 8] & mask) != (other[i / 8] & mask)) {
+                    return false;
+                }
             }
             return true;
         }
