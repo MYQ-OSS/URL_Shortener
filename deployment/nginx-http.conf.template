@@ -1,0 +1,12 @@
+# 证书签发前只开放 ACME 验证，不通过明文 HTTP 接收管理凭据。
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @DOMAIN@;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/url-shortener-acme;
+    }
+    location / {
+        return 503;
+    }
+}

@@ -1,0 +1,45 @@
+[Unit]
+Description=URL Shortener isolated RabbitMQ
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=rabbitmq
+Group=rabbitmq
+WorkingDirectory=/var/lib/url-shortener-rabbitmq
+Environment=HOME=/var/lib/url-shortener-rabbitmq
+Environment=RABBITMQ_NODENAME=url_shortener@localhost
+Environment=RABBITMQ_CONFIG_FILE=/etc/url-shortener/rabbitmq.conf
+Environment=RABBITMQ_MNESIA_BASE=/var/lib/url-shortener-rabbitmq/mnesia
+Environment=RABBITMQ_LOGS=-
+Environment=RABBITMQ_ENABLED_PLUGINS_FILE=/etc/url-shortener/enabled_plugins
+Environment=ERL_EPMD_ADDRESS=127.0.0.1
+Environment=ERL_EPMD_PORT=43691
+Environment="RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS=+S 1:1 +A 4 +SDio 1 +SDcpu 1"
+# 绕过 Ubuntu 的包装脚本，避免它强制切回默认数据目录并重定向到 /var/log/rabbitmq。
+ExecStart=/usr/lib/rabbitmq/bin/rabbitmq-server
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=45
+StateDirectory=url-shortener-rabbitmq
+StateDirectoryMode=0700
+MemoryAccounting=true
+MemoryHigh=160M
+MemoryMax=192M
+MemorySwapMax=64M
+CPUQuota=25%
+TasksMax=64
+LimitNOFILE=4096
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/url-shortener-rabbitmq
+
+[Install]
+WantedBy=multi-user.target

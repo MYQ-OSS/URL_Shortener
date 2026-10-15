@@ -1,0 +1,35 @@
+[Unit]
+Description=URL Shortener (small shared host)
+After=network.target mysql.service url-shortener-redis.service url-shortener-rabbitmq.service
+Wants=url-shortener-redis.service url-shortener-rabbitmq.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=url-shortener
+Group=url-shortener
+WorkingDirectory=/opt/url-shortener/current
+EnvironmentFile=/etc/url-shortener/app.env
+ExecStart=/usr/bin/java -Xms64m -Xmx192m -Xss512k -XX:+UseSerialGC -XX:MaxMetaspaceSize=112m -XX:ReservedCodeCacheSize=32m -XX:MaxDirectMemorySize=24m -XX:ActiveProcessorCount=2 -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai -jar /opt/url-shortener/current/URL_Shortener-0.0.1-SNAPSHOT.jar
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+MemoryAccounting=true
+MemoryHigh=320M
+MemoryMax=384M
+MemorySwapMax=128M
+CPUQuota=60%
+TasksMax=96
+LimitNOFILE=4096
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=url-shortener
+
+[Install]
+WantedBy=multi-user.target

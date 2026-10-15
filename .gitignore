@@ -33,6 +33,7 @@ build/
 
 ### 本地临时中间件实例（Docker 不可用时的替代，数据可随时删除重建） ###
 .localdev/
+.local/
 
 # 历史统计 outbox 数据，升级前需排空；新主版本不读取，也不会自动删除。
 data/stats-outbox/
@@ -51,4 +52,5 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/.env.local
 benchmark/__pycache__/
+deployment/__pycache__/
 src/main/resources/static/app/

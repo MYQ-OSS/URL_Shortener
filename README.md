@@ -48,6 +48,8 @@ java -jar target/URL_Shortener-0.0.1-SNAPSHOT.jar
 
 本机私有配置不会进入分发 JAR。运行 JAR 需要私有配置时，将文件保存在外部目录并使用 `--spring.config.additional-location=file:./config/` 和 `--spring.profiles.active=local`，或通过环境变量配置连接。
 
+共享 2 核小内存云主机请使用 [服务器部署说明](docs/deployment.md) 和 `small` profile：本机打包、systemd 限额运行、独立数据库账号及回环中间件。开发用 Compose 的内存和端口配置不适合直接用于与其他项目共存的服务器。`shortlink.domain` 支持 `https://s.example.com`，裸域名仍默认使用 HTTP。实机结果见 [部署验收记录](docs/deployment-validation.md)。
+
 ## 接口
 
 | 接口 | 用途 |
@@ -60,7 +62,7 @@ java -jar target/URL_Shortener-0.0.1-SNAPSHOT.jar
 | `POST /admin/cache/local/clear` | 清当前实例的本地缓存 |
 | `POST /admin/expired/clean` | 逻辑删除过期链接并失效缓存；单次有时间预算，返回 `status`/`executed`/`cleanedRows`/`moreRemaining` 区分跑完、提前结束与未抢到锁 |
 | `POST /admin/risk/reload` | 选择性更新域名黑白名单 |
-| `GET /actuator/prometheus` | 受管理员凭据保护的监控指标 |
+| `GET /actuator/prometheus` | 内部监控指标；小内存部署只允许本机/SSH 隧道访问，不经公网反代 |
 
 API 使用 `Authorization: Bearer <token>`；管理接口使用 `X-Admin-Token`。禁用后其他实例的 L1 由广播失效，漏收时最多保留本地 TTL；Redis 故障期间的 L2 清理由持久待办恢复后补偿，不能承诺固定秒数。
 

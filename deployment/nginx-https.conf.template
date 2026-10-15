@@ -1,0 +1,44 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name @DOMAIN@;
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/url-shortener-acme;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name @DOMAIN@;
+    ssl_certificate /etc/letsencrypt/live/@DOMAIN@/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/@DOMAIN@/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 16k;
+
+    access_log /var/log/nginx/url-shortener.access.log;
+    error_log /var/log/nginx/url-shortener.error.log warn;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    # 不把内部 Actuator 端点代理到公网；也覆盖 Servlet 矩阵参数形式的路径。
+    location ~ "^/actuator(?:[;/]|$)" {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # 覆盖用户提交的转发头，后端仅信任回环 Nginx。
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 15s;
+    }
+}

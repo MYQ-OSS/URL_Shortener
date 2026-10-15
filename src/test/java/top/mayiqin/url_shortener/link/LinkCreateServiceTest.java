@@ -81,6 +81,33 @@ class LinkCreateServiceTest {
     }
 
     @Test
+    void configuredHttpsOriginKeepsSchemeAndRemovesTrailingSlash() {
+        linkCreateService = new LinkCreateService(codeGenerator, linkMapper, queryService,
+                riskChecker, dedupService, "https://s.mayiqin.top/");
+        when(codeGenerator.generate()).thenReturn("New123");
+
+        assertEquals("https://s.mayiqin.top/New123", linkCreateService.create(
+                "https://example.com", "default", true, 0, null, null));
+        verify(linkMapper).insert(argThat((Link link) ->
+                "https://s.mayiqin.top/".equals(link.getDomain())));
+    }
+
+    @Test
+    void idempotentHttpsLinkKeepsStoredOrigin() {
+        Link existing = new Link();
+        existing.setShortUri("Exist6");
+        existing.setDomain("https://s.mayiqin.top");
+        existing.setGid("default");
+        existing.setOriginUrl("https://example.com");
+        when(dedupService.reserve(any())).thenReturn("Exist6");
+        when(linkMapper.selectOne(any())).thenReturn(existing);
+
+        assertEquals("https://s.mayiqin.top/Exist6", linkCreateService.create(
+                "https://example.com", "default", false, 0, null, null));
+        verify(linkMapper, never()).insert(any(Link.class));
+    }
+
+    @Test
     @DisplayName("幂等场景：非 forceNew 且已存在同长链时返回已有短码")
     void testCreateIdempotent() {
         String originUrl = "https://example.com/item/123";

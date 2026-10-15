@@ -2,6 +2,7 @@
 .idea
 .codegraph
 .localdev
+.local
 target
 data
 frontend/node_modules

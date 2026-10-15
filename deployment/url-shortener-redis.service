@@ -1,0 +1,32 @@
+[Unit]
+Description=URL Shortener isolated Redis
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=redis
+Group=redis
+ExecStart=/usr/bin/redis-server /etc/url-shortener/redis.conf
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StateDirectory=url-shortener-redis
+StateDirectoryMode=0700
+MemoryAccounting=true
+MemoryHigh=48M
+MemoryMax=64M
+MemorySwapMax=32M
+CPUQuota=10%
+TasksMax=16
+LimitNOFILE=1024
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/url-shortener-redis
+
+[Install]
+WantedBy=multi-user.target

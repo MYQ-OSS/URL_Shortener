@@ -1,0 +1,83 @@
+# 共享 2 核小内存主机专用；凭据只从服务器的 root-only EnvironmentFile 注入。
+server:
+  address: 127.0.0.1
+  port: 8081
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 16
+      min-spare: 2
+    max-connections: 64
+    accept-count: 16
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+      connection-timeout: 3000
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6381
+      timeout: 750ms
+  # Redisson starter 的配置前缀仍是 spring.redis.redisson，不是 spring.data.redis。
+  redis:
+    redisson:
+      config: |
+        threads: 2
+        nettyThreads: 2
+        password: "${SPRING_DATA_REDIS_PASSWORD}"
+        singleServerConfig:
+          address: "redis://127.0.0.1:6381"
+          connectionMinimumIdleSize: 1
+          connectionPoolSize: 8
+          subscriptionConnectionMinimumIdleSize: 1
+          subscriptionConnectionPoolSize: 2
+          subscriptionsPerConnection: 10
+          connectTimeout: 1000
+          timeout: 750
+          retryAttempts: 1
+  rabbitmq:
+    host: 127.0.0.1
+    port: 5673
+    virtual-host: /url-shortener
+    cache:
+      channel:
+        size: 8
+    listener:
+      simple:
+        concurrency: 1
+        max-concurrency: 1
+        prefetch: 16
+
+shortlink:
+  domain: ${SHORTLINK_DOMAIN}
+  cors:
+    allowed-origins: ${SHORTLINK_DOMAIN}
+  proxy:
+    trusted-cidrs: 127.0.0.1/32,::1/128
+  cache:
+    local-max-size: 2000
+  stats:
+    max-pending: 512
+  fallback:
+    create-qps: 2
+    redirect-qps: 30
+    db-qps: 15
+    db-max-concurrent: 2
+  rate-limit:
+    create:
+      capacity: 5
+      refill-per-sec: 2
+    redirect:
+      capacity: 40
+      refill-per-sec: 20
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

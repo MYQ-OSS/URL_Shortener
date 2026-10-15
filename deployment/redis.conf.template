@@ -1,0 +1,17 @@
+bind 127.0.0.1
+port 6381
+protected-mode yes
+daemonize no
+supervised no
+logfile ""
+dir /var/lib/url-shortener-redis
+requirepass @REDIS_PASSWORD@
+maxclients 32
+maxmemory 16mb
+# 不淘汰统计幂等键、批次与失效栅栏；到上限时拒绝写入，由应用按故障路径处理。
+maxmemory-policy noeviction
+save ""
+appendonly yes
+appendfsync everysec
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 16mb

@@ -112,7 +112,12 @@ public class LinkCreateService {
     }
 
     private static String fullUrl(String domain, String code) {
-        return "http://" + domain + "/" + code;
+        // 裸域名保持本地开发兼容；部署时可显式配置 HTTPS，不依赖请求中的 Host 头。
+        String base = domain.strip().replaceAll("/+$", "");
+        if (!base.startsWith("https://") && !base.startsWith("http://")) {
+            base = "http://" + base;
+        }
+        return base + "/" + code;
     }
 
     /** 保留旧表 NOT NULL 列的兼容写入；实际防重使用 SHA-256 预约表。 */

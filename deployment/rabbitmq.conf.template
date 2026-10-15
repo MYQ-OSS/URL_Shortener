@@ -1,0 +1,16 @@
+listeners.tcp.1 = 127.0.0.1:5673
+distribution.listener.interface = 127.0.0.1
+distribution.listener.port_range.min = 25673
+distribution.listener.port_range.max = 25673
+default_user = url_shortener
+default_pass = @RABBITMQ_PASSWORD@
+default_vhost = /url-shortener
+default_user_tags.administrator = false
+default_permissions.configure = ^shortlink[.].*
+default_permissions.read = ^shortlink[.].*
+default_permissions.write = ^shortlink[.].*
+vm_memory_high_watermark.absolute = 144MiB
+disk_free_limit.absolute = 1GB
+num_acceptors.tcp = 2
+channel_max = 32
+heartbeat = 30
