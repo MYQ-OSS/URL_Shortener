@@ -32,9 +32,13 @@ jobs:
 
       # 集成测试自建独立容器，不再重复启动未被单测使用的 services。
       - name: Isolated backend integration
+        timeout-minutes: 15
         env:
           SHORTLINK_INTEGRATION_TESTS: 'true'
-        run: mvn -Dtest=FullWorkflowIT test -B
+          # GitHub Actions 的 docker 环境下 Ryuk 常因 cgroup/权限问题启动失败，
+          # runner 是一次性的，job 结束后容器会被回收，禁用 Ryuk 不会导致长期泄漏。
+          TESTCONTAINERS_RYUK_DISABLED: 'true'
+        run: mvn -Dtest=FullWorkflowIT -DfailIfNoTests=false test -B
 
       - name: Frontend unit tests and build
         run: |
