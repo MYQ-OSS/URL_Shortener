@@ -128,7 +128,7 @@ public class StatsCollector {
                     return message;
                 }, confirmation);
                 var result = confirmation.getFuture().get(confirmTimeoutMillis, TimeUnit.MILLISECONDS);
-                if (!result.isAck() || confirmation.getReturned() != null) {
+                if (!result.ack() || confirmation.getReturned() != null) {
                     throw new IllegalStateException("消息未被队列确认接收");
                 }
                 pending.decrementAndGet();
