@@ -36,7 +36,7 @@ async function showQr() {
     <template v-if="link">
       <div class="detail-heading"><h3>{{ link.describe || hostname(link.originUrl) }}</h3>
         <span class="status-badge" :class="`status-${linkStatus(link, now.getTime())}`"><span></span>{{ statusNames[linkStatus(link, now.getTime())] }}</span></div>
-      <div class="detail-short-url"><code>{{ shortUrl(link) }}</code><button class="icon-button" aria-label="复制短链接" @click="copyLink"><Check v-if="copied" :size="18" /><Copy v-else :size="18" /></button></div>
+      <div class="detail-short-url"><a :href="shortUrl(link)" target="_blank" rel="noopener noreferrer" aria-label="打开短链接"><code>{{ shortUrl(link) }}</code></a><button class="icon-button" aria-label="复制短链接" @click="copyLink"><Check v-if="copied" :size="18" /><Copy v-else :size="18" /></button></div>
       <dl class="detail-facts">
         <div class="fact-full"><dt>目标网址</dt><dd><a v-if="safeHttpUrl(link.originUrl)" :href="safeHttpUrl(link.originUrl)!" target="_blank" rel="noopener noreferrer">{{ link.originUrl }} <ArrowUpRight :size="13" /></a><span v-else>{{ link.originUrl }}</span></dd></div>
         <div><dt>累计访问</dt><dd>{{ number(link.clickNum) }}</dd></div>

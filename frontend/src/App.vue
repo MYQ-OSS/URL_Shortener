@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Link2, Activity, SlidersHorizontal, Menu, X, ChevronRight, Plug } from '@lucide/vue'
 import { useWorkspaceStore } from './stores/workspace'
@@ -7,6 +7,14 @@ import ToastStack from './components/ToastStack.vue'
 
 const route = useRoute()
 const workspace = useWorkspaceStore()
+
+onMounted(() => {
+  // 刷新后若已从 localStorage 恢复凭据，自动加载链接列表与运行状态。
+  if (!workspace.isDemo) {
+    workspace.refreshLinks().catch(() => {})
+    workspace.refreshOperations().catch(() => {})
+  }
+})
 const sidebarOpen = ref(false)
 const logoUrl = `${import.meta.env.BASE_URL}fold.svg`
 const navigation = [

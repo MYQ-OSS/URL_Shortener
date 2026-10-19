@@ -6,9 +6,41 @@ import { demoLinks, demoStats } from '../lib/demo'
 import { backendDate, linkStatus, number, shortUrl } from '../lib/format'
 import type { Connection, CreateLinkInput, LinkRecord, MaintenanceAction, MaintenanceResult, RuntimeStats } from '../types'
 
+const STORAGE_KEY = 'shortlink:connection'
+
+function readStoredConnection(): { mode: 'demo' | 'live'; connection: Connection } | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed.mode === 'live' || parsed.mode === 'demo') {
+      return { mode: parsed.mode, connection: parsed.connection }
+    }
+  } catch {
+    // 本地存储损坏或内容非法，忽略并回退到默认状态。
+  }
+  return null
+}
+
+function writeStoredConnection(mode: 'demo' | 'live', connection: Connection) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ mode, connection }))
+  } catch {
+    // 隐私模式或存储配额已满，不阻断业务。
+  }
+}
+
+function clearStoredConnection() {
+  if (typeof localStorage === 'undefined') return
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
-  const mode = ref<'demo' | 'live'>('demo')
-  const connection = ref<Connection>({ baseUrl: '', gid: 'default', apiToken: '', adminToken: '' })
+  const stored = readStoredConnection()
+  const mode = ref<'demo' | 'live'>(stored?.mode ?? 'demo')
+  const connection = ref<Connection>(stored?.connection ?? { baseUrl: '', gid: 'default', apiToken: '', adminToken: '' })
   const links = ref<LinkRecord[]>(demoLinks())
   const stats = ref<RuntimeStats | null>(null)
   const loading = ref(false)
@@ -48,6 +80,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (current !== revision) throw new ApiError('连接过程已取消，请重新选择工作空间。')
     connection.value = validated
     mode.value = 'live'
+    writeStoredConnection('live', validated)
     links.value = records
     stats.value = null
     loadingOperations.value = false
@@ -61,6 +94,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     revision++
     mode.value = 'demo'
     connection.value = { baseUrl: '', gid: 'default', apiToken: '', adminToken: '' }
+    clearStoredConnection()
     links.value = demoLinks()
     stats.value = null
     loading.value = false

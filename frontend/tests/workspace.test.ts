@@ -3,11 +3,26 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useWorkspaceStore } from '../src/stores/workspace'
 import { demoStats } from '../src/lib/demo'
 
+const localStorageMock = (() => {
+  let store: Record<string, string> = {}
+  return {
+    getItem: vi.fn((key: string) => store[key] ?? null),
+    setItem: vi.fn((key: string, value: string) => { store[key] = value }),
+    removeItem: vi.fn((key: string) => { delete store[key] }),
+    clear: () => { store = {} },
+  }
+})()
+
 const config = { baseUrl: '', gid: 'default', apiToken: 'api-token', adminToken: '' }
 const adminConfig = { baseUrl: '', gid: 'default', apiToken: 'api-token', adminToken: 'admin-token-012345678901234567890' }
 const json = (body: string) => new Response(body, { headers: { 'Content-Type': 'application/json' } })
 const input = { originUrl: 'https://example.com', gid: 'default', forceNew: false, validType: 0 as const, validEnd: null, describe: '新链接' }
-beforeEach(() => { vi.useFakeTimers(); setActivePinia(createPinia()) })
+beforeEach(() => {
+  vi.useFakeTimers()
+  setActivePinia(createPinia())
+  localStorageMock.clear()
+  vi.stubGlobal('localStorage', localStorageMock)
+})
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 it('创建成功后直接刷新主表列表，不再轮询索引同步状态', async () => {
@@ -57,6 +72,28 @@ it('演示缓存清理后刷新保持维护结果，运行状态不再包含实�
   expect(store.stats?.stats.deliveryMode).toBe('best-effort')
   expect(store.stats).not.toHaveProperty('bloomVersion')
   expect(store.stats).not.toHaveProperty('idGenerator')
+})
+
+it('连接成功后把凭据写入本地存储，刷新后自动恢复为 live 模式', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json('[]')))
+  const store = useWorkspaceStore()
+  await store.connect(config)
+  expect(localStorageMock.setItem).toHaveBeenCalledWith('shortlink:connection', expect.stringContaining('"mode":"live"'))
+  expect(localStorageMock.setItem).toHaveBeenCalledWith('shortlink:connection', expect.stringContaining('"apiToken":"api-token"'))
+
+  // 模拟刷新：新建 store 实例应读取 localStorage 并恢复 live 模式
+  setActivePinia(createPinia())
+  const restored = useWorkspaceStore()
+  expect(restored.isDemo).toBe(false)
+  expect(restored.connection).toEqual(config)
+})
+
+it('切换到演示空间会清除本地存储的凭据', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json('[]')))
+  const store = useWorkspaceStore()
+  await store.connect(config)
+  store.useDemo()
+  expect(localStorageMock.removeItem).toHaveBeenCalledWith('shortlink:connection')
 })
 
 it('过期清理如实转述后端结局，不把“未执行”读成“没有数据”', async () => {

@@ -33,7 +33,7 @@ const status = (link: LinkRecord) => linkStatus(link, now.value.getTime())
           <td class="link-cell"><div class="link-cell-inner">
             <span class="link-monogram"><Link2 :size="17" :stroke-width="1.6" /></span>
             <div class="link-information"><button class="link-title" @click="emit('open', link)">{{ link.describe || hostname(link.originUrl) }}</button>
-              <div class="link-addresses"><button class="short-code" @click="emit('open', link)">{{ link.domain.replace(/^https?:\/\//, '') }}/<strong>{{ link.shortUri }}</strong></button><span class="origin-host">{{ hostname(link.originUrl) }}</span></div>
+              <div class="link-addresses"><a class="short-code" :href="shortUrl(link)" target="_blank" rel="noopener noreferrer" :aria-label="`打开短链接 ${shortUrl(link)}`" @click.stop>{{ link.domain.replace(/^https?:\/\//, '') }}/<strong>{{ link.shortUri }}</strong></a><span class="origin-host">{{ hostname(link.originUrl) }}</span></div>
             </div>
           </div></td>
           <td class="numeric visit-cell"><span class="mobile-label">访问</span>{{ number(link.clickNum) }}</td>

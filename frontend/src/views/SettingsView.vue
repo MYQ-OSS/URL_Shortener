@@ -44,7 +44,7 @@ function demo() { workspace.useDemo(); router.push('/') }
           </div>
           <p v-if="error" class="form-error" role="alert">{{ error }}</p>
           <div class="connection-buttons"><button class="button button-dark" :disabled="busy"><LoaderCircle v-if="busy" :size="17" class="spin" /><Check v-else :size="17" />{{ busy ? '正在验证连接' : '连接并载入' }}</button><button type="button" class="button button-quiet" :disabled="busy" @click="demo">{{ workspace.isDemo ? '返回演示空间' : '断开连接' }}</button></div>
-          <p class="credential-note"><LockKeyhole :size="14" />凭据仅保存在当前页面内存，刷新后清除。</p>
+          <p class="credential-note"><LockKeyhole :size="14" />凭据保存在浏览器本地存储，刷新后保持登录；点击“断开连接”可清除。</p>
         </form>
       </section>
       <aside class="connection-guide"><div class="guide-top"><h2>连接说明</h2></div>
